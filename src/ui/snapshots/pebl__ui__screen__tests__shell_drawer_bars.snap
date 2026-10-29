@@ -1,0 +1,11 @@
+---
+source: src/ui/screen.rs
+expression: out
+---
+ alt+r run in shell · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 1 waiting ctrl+g   …i · 4 active
+ enter run · alt+r next line (2 of 3) · alt+↑/↓ resize · ctrl+t back to Claude            shell · ~/code/nova-api · zsh
+ RESIZE  ↑/↓ 1 row · shift+↑/↓ 5 rows · = half · enter done   claude 11 ━ shell 23   min 6 · drag to the bottom to hide
+ ● shell · npm run dev · running                                                                            ctrl+t open
+ ctrl+n new session · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 1 waiting ctrl+g   …i · 4 active
+ ✕ shell · npm run dev failed · Error: connect ECONNREFUSED 127.0.0.1:6379                         alt+c send to Claude
+ alt+c send output to Claude · ctrl+t open shell · ctrl+j/k switch · ctrl+q quit  ◆ 1 waiting ctrl+g   …-api · 4 active

@@ -1,0 +1,44 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 120, 40, Main::Lines(&t))"
+---
+  nova-api / auth-refactor                                                                          ● 3  ◆ 1  ✕ 1  ○ 4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ > refactor the auth middleware to use the new session store
+
+ ● Update(src/middleware/auth.ts)
+   ⎿  Updated src/middleware/auth.ts with 3 additions
+
+ ✻ Refactoring… (47s · esc to interrupt)
+
+ ╭────────────────────────────────────────────────────────────────────────────────
+ │ >
+ ╰────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ctrl+b show sidebar · ctrl+j/k switch · ctrl+g go to waiting · ctrl+q quit                  ~/code/nova-api · 4 active

@@ -1,0 +1,44 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 120, 40, Main::Stage)"
+---
+ projects                   3 │ billing-svc / fix-flaky-tests                                              new session
+                              │
+ ▾ nova-api               ◆ 1 │ ╭──────────────────────────────────────────────────────╮
+   ● auth-refactor         2m │ │ ✻ Welcome to Claude Code!                            │
+   ◆ migrate-staging    input │ │                                                      │
+   ○ docs-pass             1h │ │   /help for help, /status for your current setup     │
+                              │ │                                                      │
+ ▾ billing-svc              3 │ │   cwd: /Users/maya/code/billing-svc                  │
+   ● onboarding-flow      14s │ ╰──────────────────────────────────────────────────────╯
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │   Starts here when you press enter. tab adds a first prompt to send.
+ › + fix-flaky-tests          │
+     enter to start           │
+                              │
+ ▸ infra                    3 │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+ + new session         ctrl+n │
+ + new project         ctrl+o │
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ enter start · tab first prompt · esc cancel                                              ~/code/billing-svc · 4 active

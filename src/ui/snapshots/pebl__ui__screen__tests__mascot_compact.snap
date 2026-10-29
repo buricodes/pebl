@@ -1,0 +1,28 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           1 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │
+   ◆ migrate-staging  │
+   ○ docs-pass        │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │ > refactor the auth middleware to use the new session st
+                      │
+                      │ ● Update(src/middleware/auth.ts)
+                      │   ⎿  Updated src/middleware/auth.ts with 3 additions
+                      │
+                      │ ✻ Refactoring… (47s · esc to interrupt)
+ ▐O▌ ◆ migrate-st… ^g │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ ^n new · ^j/k switch · ^b sidebar · ^q quit                      ◆ 1  4 active

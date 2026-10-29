@@ -1,0 +1,5 @@
+/target
+*.snap.new
+/design
+*.zip
+.DS_Store

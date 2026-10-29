@@ -1,0 +1,44 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 120, 40, Main::Stage)"
+---
+ projects                   0 │
+                              │ ╭────────────────────────────────────────────────────────────╮
+ No projects yet.             │ │ ✻ Welcome to pebl                                          │
+                              │ │                                                            │
+                              │ │   Run several Claude Code sessions side by side and see    │
+                              │ │   at a glance which ones need you.                         │
+                              │ ╰────────────────────────────────────────────────────────────╯
+                              │
+                              │
+                              │   Get started
+                              │
+                              │   enter    add this directory     ~/code/nova-api
+                              │   ctrl+o   add a project by path
+                              │   ?        all shortcuts
+                              │
+                              │
+                              │   Found Claude Code history in 2 folders
+                              │     ~/code/nova-api       12 sessions
+                              │     ~/code/billing-svc    4 sessions
+                              │   press i to import both
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+ + new project         ctrl+o │
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ enter add this directory · ctrl+o new project · i import · ctrl+q quit                      ~/code/nova-api · 0 active

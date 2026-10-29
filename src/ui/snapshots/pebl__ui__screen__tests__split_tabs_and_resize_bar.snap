@@ -1,0 +1,8 @@
+---
+source: src/ui/screen.rs
+expression: out
+---
+ 1 nova-api / auth-refactor             ▄ 42%  ● × │ 2 nova-api / migrate-staging           ▄ 42%  ◆ × │ 3 billing-svc / onboarding-flow        ▄ 42%  ● × │ 4 billing-svc / e2e-tests                █ 97%  ✕ ×
+ alt+1-4 focus column · ctrl+\ split · ctrl+w close column · alt+←/→ resize · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit                                                        ◆ 1 waiting ctrl+g   ~/code/nova-api · 4 columns · 4 active
+ 1 nova-api / auth-refactor             ▄ 42%  ● × ┃ 2 nova-api / migrate-staging           ▄ 42%  ◆ × │ 3 billing-svc / onboarding-flow        ▄ 42%  ● × │ 4 billing-svc / e2e-tests                █ 97%  ✕ ×
+ RESIZE  ←/→ 1 col · shift+←/→ 5 cols · = equalize · enter done                                                                                                                                                      51 │ 51 │ 51 │ 53   min 30

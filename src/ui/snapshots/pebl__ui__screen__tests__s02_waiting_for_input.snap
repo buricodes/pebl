@@ -1,0 +1,44 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 120, 40, Main::Lines(&[]))"
+---
+ projects                   3 │ nova-api / migrate-staging                                    ◆ waiting for input · 3m
+                              │
+ ▾ nova-api               ◆ 1 │
+   ● auth-refactor         2m │
+ › ◆ migrate-staging    input │
+   ○ docs-pass             1h │
+                              │
+ ▾ billing-svc              3 │
+   ● onboarding-flow      14s │
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │
+                              │
+ ▸ infra                  ◆ 1 │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+ + new session         ctrl+n │
+ + new project         ctrl+o │
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ ctrl+n new session · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 2 waiting ctrl+g   …i · 5 active
