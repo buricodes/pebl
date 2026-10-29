@@ -52,7 +52,7 @@ pebl doctor
 
 The build takes about a minute. `pebl doctor` checks that tmux, Claude Code and the hooks are all set up, and tells you what's missing. If your shell says `pebl: command not found`, `~/.cargo/bin` isn't on your PATH yet: open a new terminal, or run `source ~/.cargo/env`.
 
-**Updating:** run the step 4 command again with `--force`, then `pebl reload` to switch the running pebl over without stopping your sessions.
+**Updating:** run `pebl update`. It builds the latest version from GitHub and switches the running pebl over without stopping your sessions. pebl doesn't update itself, so run it whenever you want the newest fixes.
 
 **From a clone:** `cargo install --path .`
 
@@ -133,7 +133,8 @@ Status glyphs: `●` running · `◆` waiting for you · `○` idle · `✕` err
 pebl add ~/code/api          # add a project
 pebl new api -n fix-login -p "fix the login redirect"
 pebl ls                      # project, session, status, age (tab separated)
-pebl reload                  # pick up a new pebl version; sessions keep running
+pebl update                  # get the latest pebl from GitHub; sessions keep running
+pebl reload                  # restart pebl's own panes on the installed version
 pebl chime                   # hear the notification sounds
 pebl kill --yes              # stop pebl and every session it runs
 ```

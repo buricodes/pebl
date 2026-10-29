@@ -68,6 +68,10 @@ enum Cmd {
         about = "Restart pebl's own panes and daemon on the installed version (sessions keep running)"
     )]
     Reload,
+    #[command(
+        about = "Update pebl to the latest version from GitHub, then reload it (sessions keep running)"
+    )]
+    Update,
     #[command(about = "Stop pebl and every session it runs")]
     Kill {
         #[arg(long)]
@@ -195,6 +199,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         },
         Some(Cmd::Reload) => reload(),
+        Some(Cmd::Update) => update(),
         Some(Cmd::Kill { yes }) => {
             if !yes {
                 bail!("this stops every Claude Code session pebl is running; rerun with --yes");
@@ -317,6 +322,29 @@ fn daemon_cmd(pebl: &str) -> String {
         backend::tmux::sh_quote(pebl),
         backend::tmux::sh_quote(&paths::daemon_log().display().to_string())
     )
+}
+
+const REPO: &str = "https://github.com/buricodes/pebl";
+
+fn update() -> Result<()> {
+    which("cargo").context("cargo isn't installed; get it from https://rustup.rs")?;
+    println!("Updating pebl from {REPO}");
+    let ok = std::process::Command::new("cargo")
+        .args(["install", "--git", REPO, "--locked", "--force"])
+        .status()
+        .context("running cargo")?
+        .success();
+    if !ok {
+        bail!("the update didn't build; your current pebl is unchanged");
+    }
+    let version = std::process::Command::new(self_exe())
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    println!("Installed {version}");
+    reload()
 }
 
 fn reload() -> Result<()> {
