@@ -249,14 +249,13 @@ fn help(p: &mut Painter) {
         used += rows.len() as i32 + 1;
     }
     let bottom = if two { 3 + split + 1 } else { y };
-    let note = if cfg!(target_os = "macos") {
-        "alt keys need Option as Meta: Terminal › Settings › Profiles › Keyboard"
-    } else {
-        ""
-    };
-    if !note.is_empty() {
-        p.t(1, bottom, note, Tok::Dim, false);
-    }
+    p.t(
+        1,
+        bottom,
+        "macOS: alt keys need Option as Meta (Terminal › Settings › Profiles › Keyboard)",
+        Tok::Dim,
+        false,
+    );
 }
 
 fn exited(p: &mut Painter, name: &str, code: Option<i32>) {

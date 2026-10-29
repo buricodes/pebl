@@ -38,7 +38,7 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   e                open the folder in your editor
                               │   /                filter
                               │   m                mute mascot, chimes, alerts
- + new session         ctrl+n │ alt keys need Option as Meta: Terminal › Settings › Profiles › Keyboard
+ + new session         ctrl+n │ macOS: alt keys need Option as Meta (Terminal › Settings › Profiles › Keyboard)
  + new project         ctrl+o │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
  enter open · p peek · c column · d review · f finish · r rename · x kill              ◆ 1 waiting ctrl+g    · 4 active
