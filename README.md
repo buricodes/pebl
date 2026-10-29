@@ -24,16 +24,39 @@ pebl is a terminal-native orchestrator for Claude Code: a project sidebar on the
 
 ## Install
 
-Requirements: macOS or Linux, [Rust](https://rustup.rs) (for `cargo`), tmux 3.2 or newer (`brew install tmux` or your package manager), and [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and logged in.
+pebl runs on macOS and Linux. Four steps, each one a single command.
+
+**1. Rust**, which builds pebl. Skip this if `cargo --version` already works.
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then open a new terminal so `cargo` is on your PATH.
+
+**2. tmux 3.2 or newer**, which pebl uses under the hood. Skip this if `tmux -V` shows 3.2 or higher.
+
+```sh
+brew install tmux          # macOS
+sudo apt install tmux      # Debian / Ubuntu
+```
+
+**3. Claude Code**, installed and logged in. Follow [the Claude Code setup guide](https://docs.claude.com/en/docs/claude-code), then run `claude` once to log in.
+
+**4. pebl**
 
 ```sh
 cargo install --git https://github.com/buricodes/pebl
 pebl doctor
 ```
 
-`pebl doctor` checks tmux, Claude Code and the hook setup. To update later, run the same `cargo install` command with `--force`, then `pebl reload` to switch the running pebl over without stopping your sessions.
+The build takes about a minute. `pebl doctor` checks that tmux, Claude Code and the hooks are all set up, and tells you what's missing. If your shell says `pebl: command not found`, `~/.cargo/bin` isn't on your PATH yet: open a new terminal, or run `source ~/.cargo/env`.
 
-From a clone: `cargo install --path .`
+**Updating:** run the step 4 command again with `--force`, then `pebl reload` to switch the running pebl over without stopping your sessions.
+
+**From a clone:** `cargo install --path .`
+
+**Optional (macOS):** `pebl hotkey install` adds a global shortcut that brings pebl to the front from any app. See [Summon from anywhere](#summon-from-anywhere-macos).
 
 ## Use
 
