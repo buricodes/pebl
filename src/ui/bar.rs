@@ -719,6 +719,7 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         Mode::Normal if v.focus == crate::view::Focus::Sidebar && !short => keys(&[
             ("enter", "open"),
             ("p", "peek"),
+            ("c", "column"),
             ("d", "review"),
             ("f", "finish"),
             ("r", "rename"),

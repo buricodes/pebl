@@ -3,42 +3,42 @@ source: src/ui/screen.rs
 expression: "snap(&v, 120, 40, Main::Stage)"
 ---
  projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
-                              │ ✻ Shortcuts
- ▾ nova-api               ◆ 1 │ captured before input is forwarded to Claude Code
+                              │ ✻ Shortcuts                                                                   esc close
+ ▾ nova-api               ◆ 1 │ pebl catches these before they reach Claude Code
  › ● auth-refactor         2m │
-   ◆ migrate-staging    input │   ctrl+j / ctrl+k   next / previous session
-   ○ docs-pass             1h │   ctrl+g            jump to whatever needs you
-                              │   ctrl+n            new session in current project
- ▾ billing-svc              3 │   ctrl+o            new project
-   ● onboarding-flow      14s │   ctrl+b            toggle sidebar
-   ✕ e2e-tests         exit 1 │   ctrl+space        focus sidebar ↔ main pane
-   ○ a11y-audit            3h │   ctrl+q            quit (sessions keep running)
-                              │   ctrl+\            open a session in a new column (max 4)
- ▸ infra                    3 │   alt+1-4 / ctrl+w  focus / close a column
-                              │   alt+← / →         resize columns
-                              │   ctrl+t            shell drawer under Claude
-                              │   alt+r             type Claude's next command in the shell
-                              │   ctrl+f            search past conversations
-                              │   ctrl+x            mark sessions, send one prompt
-                              │
-                              │   j / k             move in the sidebar
-                              │   enter             open session / resume exited one
-                              │   space             expand / collapse project
-                              │   r                 rename
-                              │   x                 kill session (confirm)
-                              │   p                 peek at a session and answer it
-                              │   d                 review its changes, comment, send back
-                              │   e                 open the folder in your editor
-                              │   w                 new worktree session
-                              │   f                 finish a worktree: merge, PR or discard
-                              │   /                 filter
-                              │   m                 mute the mascot and bell
-                              │
-                              │  esc close
-                              │
-                              │
-                              │
- + new session         ctrl+n │
+   ◆ migrate-staging    input │ anywhere, even inside Claude
+   ○ docs-pass             1h │   ctrl+j / ctrl+k  next / previous session
+                              │   ctrl+g           jump to whatever needs you
+ ▾ billing-svc              3 │   ctrl+n           new session in this project
+   ● onboarding-flow      14s │   ctrl+o           new project
+   ✕ e2e-tests         exit 1 │   ctrl+b           hide / show the sidebar
+   ○ a11y-audit            3h │   ctrl+space       sidebar ↔ Claude
+                              │   ctrl+f           search past conversations
+ ▸ infra                    3 │   ctrl+x           mark sessions, send one prompt
+                              │   ctrl+q           quit (sessions keep running)
+                              │ columns
+                              │   ctrl+\           open a session in a new column
+                              │   alt+1 … alt+4    focus a column
+                              │   alt+← / alt+→    resize columns
+                              │   ctrl+w           close the focused column
+                              │ shell drawer
+                              │   ctrl+t           open shell / back to Claude / hide
+                              │   alt+r            type Claude's next command
+                              │   alt+↑ / alt+↓    resize the drawer
+                              │   alt+c            send shell output to Claude
+                              │ in the sidebar
+                              │   j / k · enter    move · open or resume
+                              │   space            fold a project
+                              │   p                peek at a session and answer it
+                              │   d                review its changes
+                              │   f                finish a worktree
+                              │   c                open it in a new column
+                              │   w                new worktree session
+                              │   r · x            rename · kill
+                              │   e                open the folder in your editor
+                              │   /                filter
+                              │   m                mute mascot, chimes, alerts
+ + new session         ctrl+n │ alt keys need Option as Meta: Terminal › Settings › Profiles › Keyboard
  + new project         ctrl+o │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- enter open · p peek · d review · f finish · r rename · x kill · w worktree            ◆ 1 waiting ctrl+g    · 4 active
+ enter open · p peek · c column · d review · f finish · r rename · x kill              ◆ 1 waiting ctrl+g    · 4 active

@@ -159,53 +159,104 @@ fn new_session(v: &View, p: &mut Painter, cwd: &str) {
     }
 }
 
-const HELP: &[(&str, &str)] = &[
-    ("ctrl+j / ctrl+k", "next / previous session"),
-    ("ctrl+g", "jump to whatever needs you"),
-    ("ctrl+n", "new session in current project"),
-    ("ctrl+o", "new project"),
-    ("ctrl+b", "toggle sidebar"),
-    ("ctrl+space", "focus sidebar ↔ main pane"),
-    ("ctrl+q", "quit (sessions keep running)"),
-    ("ctrl+\\", "open a session in a new column (max 4)"),
-    ("alt+1-4 / ctrl+w", "focus / close a column"),
-    ("alt+← / →", "resize columns"),
-    ("ctrl+t", "shell drawer under Claude"),
-    ("alt+r", "type Claude's next command in the shell"),
-    ("ctrl+f", "search past conversations"),
-    ("ctrl+x", "mark sessions, send one prompt"),
-    ("", ""),
-    ("j / k", "move in the sidebar"),
-    ("enter", "open session / resume exited one"),
-    ("space", "expand / collapse project"),
-    ("r", "rename"),
-    ("x", "kill session (confirm)"),
-    ("p", "peek at a session and answer it"),
-    ("d", "review its changes, comment, send back"),
-    ("e", "open the folder in your editor"),
-    ("w", "new worktree session"),
-    ("f", "finish a worktree: merge, PR or discard"),
-    ("/", "filter"),
-    ("m", "mute the mascot and bell"),
+const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "anywhere, even inside Claude",
+        &[
+            ("ctrl+j / ctrl+k", "next / previous session"),
+            ("ctrl+g", "jump to whatever needs you"),
+            ("ctrl+n", "new session in this project"),
+            ("ctrl+o", "new project"),
+            ("ctrl+b", "hide / show the sidebar"),
+            ("ctrl+space", "sidebar ↔ Claude"),
+            ("ctrl+f", "search past conversations"),
+            ("ctrl+x", "mark sessions, send one prompt"),
+            ("ctrl+q", "quit (sessions keep running)"),
+        ],
+    ),
+    (
+        "columns",
+        &[
+            ("ctrl+\\", "open a session in a new column"),
+            ("alt+1 … alt+4", "focus a column"),
+            ("alt+← / alt+→", "resize columns"),
+            ("ctrl+w", "close the focused column"),
+        ],
+    ),
+    (
+        "shell drawer",
+        &[
+            ("ctrl+t", "open shell / back to Claude / hide"),
+            ("alt+r", "type Claude's next command"),
+            ("alt+↑ / alt+↓", "resize the drawer"),
+            ("alt+c", "send shell output to Claude"),
+        ],
+    ),
+    (
+        "in the sidebar",
+        &[
+            ("j / k · enter", "move · open or resume"),
+            ("space", "fold a project"),
+            ("p", "peek at a session and answer it"),
+            ("d", "review its changes"),
+            ("f", "finish a worktree"),
+            ("c", "open it in a new column"),
+            ("w", "new worktree session"),
+            ("r · x", "rename · kill"),
+            ("e", "open the folder in your editor"),
+            ("/", "filter"),
+            ("m", "mute mascot, chimes, alerts"),
+        ],
+    ),
 ];
+
+fn help_block(p: &mut Painter, x: i32, y: i32, title: &str, rows: &[(&str, &str)]) -> i32 {
+    p.t(x, y, title, Tok::Acc, false);
+    for (i, (k, d)) in rows.iter().enumerate() {
+        p.segs(
+            x,
+            y + 1 + i as i32,
+            &[seg(format!("  {k:<17}"), Tok::Fg), seg(*d, Tok::Mute)],
+        );
+    }
+    y + rows.len() as i32 + 1
+}
 
 fn help(p: &mut Painter) {
     p.segs(1, 0, &[seg("✻ ", Tok::Acc), segb("Shortcuts", Tok::Fg)]);
+    let close = keys(&[("esc", "close")]);
+    let w = p.w();
+    p.segs(w - crate::ui::seg_len(&close) as i32 - 1, 0, &close);
     p.t(
         1,
         1,
-        "captured before input is forwarded to Claude Code",
+        "pebl catches these before they reach Claude Code",
         Tok::Mute,
         false,
     );
-    for (i, (k, d)) in HELP.iter().enumerate() {
-        p.segs(
-            1,
-            3 + i as i32,
-            &[seg(format!("  {k:<18}"), Tok::Fg), seg(*d, Tok::Mute)],
-        );
+    let total: i32 = HELP.iter().map(|(_, r)| r.len() as i32 + 1).sum();
+    let two = 3 + total + 3 > p.h() && p.w() >= 100;
+    let mut y = 3;
+    let mut x = 1;
+    let split = if two { total / 2 } else { i32::MAX };
+    let mut used = 0;
+    for (title, rows) in HELP {
+        if used >= split && x == 1 {
+            x = p.w() / 2 + 1;
+            y = 3;
+        }
+        y = help_block(p, x, y, title, rows);
+        used += rows.len() as i32 + 1;
     }
-    p.segs(1, 4 + HELP.len() as i32, &keys(&[("esc", "close")]));
+    let bottom = if two { 3 + split + 1 } else { y };
+    let note = if cfg!(target_os = "macos") {
+        "alt keys need Option as Meta: Terminal › Settings › Profiles › Keyboard"
+    } else {
+        ""
+    };
+    if !note.is_empty() {
+        p.t(1, bottom, note, Tok::Dim, false);
+    }
 }
 
 fn exited(p: &mut Painter, name: &str, code: Option<i32>) {
