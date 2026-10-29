@@ -146,6 +146,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     runnable: HashMap<String, (Vec<String>, usize)>,
     flags: HashMap<&'static str, bool>,
     bar_h: u16,
+    prev_active: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -235,6 +236,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             runnable: HashMap::new(),
             flags: HashMap::new(),
             bar_h: 1,
+            prev_active: None,
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -1610,8 +1612,57 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             return;
         }
+        if self.active.as_deref() != Some(sid) {
+            self.prev_active = self.active.take();
+        }
         self.active = Some(sid.into());
         self.col = 0;
+    }
+
+    fn cursor_to_column(&mut self) -> Result<()> {
+        let Some(CurRef::Session(sid)) = self.cursor.clone() else {
+            bail!("move to a session to open it in a column");
+        };
+        if self.cols.contains(&sid) {
+            bail!("that session already has a column");
+        }
+        let back = self
+            .prev_active
+            .clone()
+            .filter(|p| *p != sid && !self.cols.contains(p))
+            .filter(|p| self.st.session(p).is_some_and(|s| s.pane.is_some()));
+        if self.active.as_deref() == Some(sid.as_str()) {
+            let Some(back) = back else {
+                bail!("that session is already on screen; pick another one");
+            };
+            self.check_room()?;
+            self.active = Some(back);
+            self.sync_main();
+        } else {
+            self.check_room()?;
+        }
+        if self.st.session(&sid).and_then(|s| s.pane.clone()).is_none() {
+            bail!("that session isn't running");
+        }
+        self.cancel_mode();
+        self.cols.push(sid.clone());
+        self.col_w.clear();
+        self.col = self.cols.len();
+        self.cursor = Some(CurRef::Session(sid));
+        self.apply_layout();
+        self.set_focus(Focus::Main);
+        Ok(())
+    }
+
+    fn check_room(&self) -> Result<()> {
+        if self.cols.len() + 1 >= MAX_COLS {
+            bail!("already {MAX_COLS} columns; ctrl+w closes one");
+        }
+        let n = self.cols.len() as u16 + 2;
+        if self.main_width() < MIN_COL * n + n - 1 {
+            bail!("no room for another column; widen the window or hide the sidebar");
+        }
+        Ok(())
     }
 
     fn new_from_cli(&mut self, project: &str, name: &str, prompt: &str) -> Result<String> {
@@ -3083,6 +3134,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             Char('i') => self.import_history(),
             Char('e') => self.open_editor()?,
+            Char('c') => self.cursor_to_column()?,
             Char('f') => {
                 let sid = match &self.cursor {
                     Some(CurRef::Session(sid)) => sid.clone(),
@@ -4160,6 +4212,25 @@ mod tests {
         assert_eq!(a.view().shell.unwrap().resize.unwrap().1, before + 5);
         key(&mut a, Role::Bar, KeyCode::Enter);
         assert_eq!(a.view().focus, Focus::Shell);
+    }
+
+    #[test]
+    fn c_opens_the_cursor_session_in_a_new_column() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b", "c"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        assert_eq!(a.view().active.unwrap().session, "c");
+        key(&mut a, Role::Sidebar, KeyCode::Char('k'));
+        assert_eq!(a.view().active.unwrap().session, "b");
+        key(&mut a, Role::Sidebar, KeyCode::Char('c'));
+        assert_eq!(a.active.as_deref(), Some(ids[2].as_str()));
+        assert_eq!(a.cols, vec![ids[1].clone()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        let out = a.handle_ctl(&["view".into()]);
+        assert!(out.contains("\"col_focus\": 1"), "{out}");
     }
 
     #[test]
