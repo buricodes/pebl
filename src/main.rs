@@ -368,7 +368,7 @@ fn reload() -> Result<()> {
 }
 
 fn ensure_daemon() -> Result<Tmux> {
-    which("tmux").context("tmux is not installed (brew install tmux)")?;
+    which("tmux").with_context(|| format!("tmux is not installed ({})", tmux_hint()))?;
     std::fs::create_dir_all(paths::home())?;
     let cfg = config::load(&paths::config())?;
     let pebl = self_exe();
@@ -441,10 +441,71 @@ fn ctl_started(args: &[String]) -> Result<String> {
     ipc::ctl(&paths::sock(), args)
 }
 
-fn open() -> Result<()> {
-    if which("claude").is_none() {
-        eprintln!("pebl: warning: `claude` is not on PATH; sessions will fail to start");
+fn tmux_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "brew install tmux"
+    } else {
+        "sudo apt install tmux   (or your distro's package manager)"
     }
+}
+
+fn tmux_version() -> Option<(u32, u32)> {
+    let out = std::process::Command::new("tmux").arg("-V").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let v = text.split_whitespace().nth(1)?;
+    let mut parts = v
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty());
+    Some((
+        parts.next()?.parse().ok()?,
+        parts.next().unwrap_or("0").parse().ok()?,
+    ))
+}
+
+fn preflight() -> Result<()> {
+    let mut missing: Vec<String> = Vec::new();
+    match which("tmux") {
+        None => missing.push(format!(
+            "tmux is not installed. Install it with:\n      {}",
+            tmux_hint()
+        )),
+        Some(_) => {
+            if let Some((major, minor)) = tmux_version() {
+                if (major, minor) < (3, 2) {
+                    missing.push(format!(
+                        "tmux {major}.{minor} is too old; pebl needs 3.2 or newer. Update it with:\n      {}",
+                        tmux_hint()
+                    ));
+                }
+            }
+        }
+    }
+    if which("claude").is_none() {
+        missing.push(
+            "Claude Code is not installed (or `claude` is not on your PATH). Install it from:\n      https://docs.claude.com/en/docs/claude-code\n    then run `claude` once to log in."
+                .to_string(),
+        );
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    eprintln!(
+        "pebl needs {} first:\n",
+        if missing.len() == 1 {
+            "one thing"
+        } else {
+            "a few things"
+        }
+    );
+    for (i, m) in missing.iter().enumerate() {
+        eprintln!("  {}. {m}\n", i + 1);
+    }
+    eprintln!("Then run `pebl` again. `pebl doctor` checks everything, and the full setup is at\nhttps://github.com/buricodes/pebl#install");
+    std::process::exit(1);
+}
+
+fn open() -> Result<()> {
+    preflight()?;
     let t = ensure_daemon()?;
     let (w, h) = crossterm::terminal::size().unwrap_or((120, 40));
     let cwd = std::env::current_dir()?.display().to_string();
