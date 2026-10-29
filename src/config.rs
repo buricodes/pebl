@@ -12,6 +12,7 @@ pub struct Config {
     pub mascot: Option<String>,
     pub notify: Notify,
     pub statusline: Option<bool>,
+    pub update_check: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

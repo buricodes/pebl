@@ -24,6 +24,10 @@ pub fn sock() -> PathBuf {
     home().join("pebl.sock")
 }
 
+pub fn update_cache() -> PathBuf {
+    home().join("update.json")
+}
+
 pub fn statusline_dir() -> PathBuf {
     home().join("statusline")
 }
