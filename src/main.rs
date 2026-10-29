@@ -337,13 +337,7 @@ fn update() -> Result<()> {
     if !ok {
         bail!("the update didn't build; your current pebl is unchanged");
     }
-    let version = std::process::Command::new(self_exe())
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    println!("Installed {version}");
+    println!("pebl is up to date.");
     reload()
 }
 
