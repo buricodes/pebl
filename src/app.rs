@@ -147,6 +147,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     flags: HashMap<&'static str, bool>,
     bar_h: u16,
     prev_active: Option<String>,
+    pub update: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -237,6 +238,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             flags: HashMap::new(),
             bar_h: 1,
             prev_active: None,
+            update: None,
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -406,6 +408,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 self.mode = IMode::Mark { marks: Vec::new() };
                 self.set_focus(Focus::Sidebar);
+                Ok(String::new())
+            }
+            ["update-ready"] => {
+                self.update = crate::update::available();
                 Ok(String::new())
             }
             ["search-ready"] => {
@@ -3463,6 +3469,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             limits: self.limit_rows(),
             today: self.today(),
             shell: self.shell_view(),
+            update: self.update.clone(),
             runnable: self
                 .active
                 .as_ref()

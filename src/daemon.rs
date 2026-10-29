@@ -58,6 +58,17 @@ pub fn run() -> Result<()> {
         .ok()
         .and_then(|c| c.mascot());
     replay_events(&mut app);
+    app.update = crate::update::available();
+    if cfg.update_check.unwrap_or(true) {
+        let sock = sock.clone();
+        std::thread::spawn(move || loop {
+            if crate::update::due() {
+                crate::update::check_now();
+                let _ = crate::ipc::ctl(&sock, &["update-ready".into()]);
+            }
+            std::thread::sleep(Duration::from_secs(60 * 60));
+        });
+    }
     app.load_statuslines(&paths::statusline_dir());
     app.search_root = crate::search::root();
     app.start_index();

@@ -757,6 +757,15 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         right.push(segb(format!("{m} marked"), Tok::Acc));
         right.push(seg("   ", Tok::Fg));
     }
+    if let (Some(u), Mode::Normal) = (&v.update, &v.mode) {
+        if short {
+            right.push(segb(format!("↑ {u}"), Tok::Acc));
+        } else {
+            right.push(segb(format!("pebl {u} is out"), Tok::Acc));
+            right.push(seg(" · pebl update", Tok::Mute));
+        }
+        right.push(seg("   ", Tok::Fg));
+    }
     let waiting = v.counts.waiting;
     if short {
         if waiting > 0 {

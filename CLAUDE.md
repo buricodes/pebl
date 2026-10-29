@@ -32,6 +32,10 @@ Manual end-to-end runs without touching your real `~/.pebl`: set `PEBL_HOME`, `P
 - `src/search.rs` — background index of `~/.claude/projects/*/*.jsonl` (prompts and replies only, read incrementally); `src/diff.rs` + `src/review.rs` — the review popup; `src/notify.rs` — chimes, macOS and ntfy notifications.
 - Split columns: extra Claude panes are joined into the `pebl-ui` window with a one-row `tabs` view pane above them. `App::apply_layout` builds a `backend::Arrangement` and the tmux backend applies it as one layout string (reordering panes first, because tmux assigns layout cells by pane order).
 
+## Releasing
+
+`scripts/release.sh 0.3.0 "what changed"` bumps the version, runs the tests, tags, pushes and publishes a GitHub release. Users see `pebl 0.3.0 is out` in their status bar within a day (the daemon checks the latest release once a day, cached in `~/.pebl/update.json`), and `pebl update` installs that release tag.
+
 ## Rules
 
 - Never edit the user's `~/.claude/settings.json`. Hooks are injected per session with `--settings`.

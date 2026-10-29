@@ -39,6 +39,8 @@ pub struct View {
     pub shell: Option<ShellView>,
     #[serde(default)]
     pub runnable: Option<(usize, usize)>,
+    #[serde(default)]
+    pub update: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

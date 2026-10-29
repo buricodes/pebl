@@ -18,6 +18,7 @@ mod search;
 mod status;
 mod store;
 mod ui;
+mod update;
 mod view;
 
 use anyhow::{bail, Context, Result};
@@ -328,9 +329,23 @@ const REPO: &str = "https://github.com/buricodes/pebl";
 
 fn update() -> Result<()> {
     which("cargo").context("cargo isn't installed; get it from https://rustup.rs")?;
-    println!("Updating pebl from {REPO}");
+    let latest = update::check_now();
+    if let Some(v) = &latest {
+        if !update::is_newer(v, update::current()) {
+            println!("pebl {} is the latest version.", update::current());
+            return Ok(());
+        }
+        println!("Updating pebl {} to {v}", update::current());
+    } else {
+        println!("Updating pebl from {REPO}");
+    }
+    let mut args = vec!["install", "--git", REPO, "--locked", "--force"];
+    let tag = latest.map(|v| format!("v{v}"));
+    if let Some(t) = &tag {
+        args.extend(["--tag", t.as_str()]);
+    }
     let ok = std::process::Command::new("cargo")
-        .args(["install", "--git", REPO, "--locked", "--force"])
+        .args(&args)
         .status()
         .context("running cargo")?
         .success();
@@ -609,6 +624,17 @@ fn doctor() -> Result<()> {
         println!("  · hooks  written on first launch");
     }
     println!("  · hotkey  {}", hotkey::status());
+    match update::check_now() {
+        Some(latest) if update::is_newer(&latest, update::current()) => println!(
+            "  · version  {} (pebl {latest} is out: run `pebl update`)",
+            update::current()
+        ),
+        Some(_) => println!("  · version  {} (latest)", update::current()),
+        None => println!(
+            "  · version  {} (couldn't check GitHub for a newer one)",
+            update::current()
+        ),
+    }
     if !ok {
         bail!("some checks failed");
     }

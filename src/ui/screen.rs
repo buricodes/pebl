@@ -639,6 +639,17 @@ mod tests {
     }
 
     #[test]
+    fn update_notice_in_status_bar() {
+        let mut v = base();
+        v.update = Some("0.2.0".into());
+        let area = Rect::new(0, 0, 120, 1);
+        let mut buf = Buffer::empty(area);
+        bar::render(&v, &mut Painter::new(&mut buf, area, v.color));
+        let text = to_text(&buf);
+        assert!(text.contains("pebl 0.2.0 is out · pebl update"), "{text}");
+    }
+
+    #[test]
     fn peek_strip() {
         let mut v = base();
         v.mode = Mode::Peek(Peek {
