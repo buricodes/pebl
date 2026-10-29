@@ -1,0 +1,28 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&usage_view(80), 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ billing-svc / onboarding-flow                ● running
+                      │ Sonnet  █ 97%                             run /compact
+                      │
+ ▾ nova-api       ◆ 1 │
+   ● auth-refactor  ▄ │
+   ◆ migrate-stagi… ▅ │
+   ○ docs-pass      ▇ │
+                      │
+ ▾ billing-svc      3 │
+ › ● onboarding-fl… █ │
+   ✕ e2e-tests      ▃ │
+   ○ a11y-audit     ▁ │
+                      │ > refactor the auth middleware to use the new session st
+ ▸ infra            3 │
+                      │ ● Update(src/middleware/auth.ts)
+                      │   ⎿  Updated src/middleware/auth.ts with 3 additions
+ ▐-▌ all quiet        │
+──────────────────────│ ✻ Refactoring… (47s · esc to interrupt)
+ 5h 23% · wk 84%      │
+ ↺ 2h14m              │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ ^n new · ^j/k switch · ^b sidebar · ^q quit                      ◆ 1  4 active

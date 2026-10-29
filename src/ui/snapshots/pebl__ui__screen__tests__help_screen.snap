@@ -1,0 +1,44 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 120, 40, Main::Stage)"
+---
+ projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
+                              │ ✻ Shortcuts
+ ▾ nova-api               ◆ 1 │ captured before input is forwarded to Claude Code
+ › ● auth-refactor         2m │
+   ◆ migrate-staging    input │   ctrl+j / ctrl+k   next / previous session
+   ○ docs-pass             1h │   ctrl+g            jump to whatever needs you
+                              │   ctrl+n            new session in current project
+ ▾ billing-svc              3 │   ctrl+o            new project
+   ● onboarding-flow      14s │   ctrl+b            toggle sidebar
+   ✕ e2e-tests         exit 1 │   ctrl+space        focus sidebar ↔ main pane
+   ○ a11y-audit            3h │   ctrl+q            quit (sessions keep running)
+                              │   ctrl+\            open a session in a new column (max 4)
+ ▸ infra                    3 │   alt+1-4 / ctrl+w  focus / close a column
+                              │   alt+← / →         resize columns
+                              │   ctrl+t            shell drawer under Claude
+                              │   alt+r             type Claude's next command in the shell
+                              │   ctrl+f            search past conversations
+                              │   ctrl+x            mark sessions, send one prompt
+                              │
+                              │   j / k             move in the sidebar
+                              │   enter             open session / resume exited one
+                              │   space             expand / collapse project
+                              │   r                 rename
+                              │   x                 kill session (confirm)
+                              │   p                 peek at a session and answer it
+                              │   d                 review its changes, comment, send back
+                              │   e                 open the folder in your editor
+                              │   w                 new worktree session
+                              │   f                 finish a worktree: merge, PR or discard
+                              │   /                 filter
+                              │   m                 mute the mascot and bell
+                              │
+                              │  esc close
+                              │
+                              │
+                              │
+ + new session         ctrl+n │
+ + new project         ctrl+o │
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ enter open · p peek · d review · f finish · r rename · x kill · w worktree            ◆ 1 waiting ctrl+g    · 4 active

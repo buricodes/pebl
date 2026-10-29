@@ -1,0 +1,28 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │ > refactor the auth middleware to use the new session st
+   ◆ migrate-staging  │
+   ○ docs-pass        │ ● Update(src/middleware/auth.ts)
+                      │   ⎿  Updated src/middleware/auth.ts with 3 additions
+ ▾ billing-svc      3 │
+   ● onboarding-flow  │ ✻ Refactoring… (47s · esc to interrupt)
+   ✕ e2e-tests        │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ search / redis                                            this project  ·  all
+   nova-api   Auth middleware to … …the old redis path behind a flag         2h
+   nova-api   Rate limiter rewrite …et into redis with a Lua script…         3d
+ › infra      ElastiCache upgrade… the redis 7.2 cluster mode needs…         6d
+   billing-s… Session timeout bug  …hes the redis TTL when the user…     Oct 12
+   nova-api   Local dev setup      …pose up redis postgres before s…      Oct 3
+   infra      CI cache flakiness   calling redis-cli FLUSHALL in th…     Sep 28
+   ↓ 3 more · 14 matches in 9 conversations
+────────────────────────────────────────────────────────────────────────────────
+ enter resume · ↑/↓ choose · tab scope · esc close                ◆ 1  4 active

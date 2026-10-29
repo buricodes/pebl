@@ -1,0 +1,20 @@
+---
+source: src/review.rs
+expression: "crate::ui::screen::to_text(&buf)"
+---
+ ✻ Review  nova-api / auth-refactor                                        1 file · +3 −2 · vs main
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  src/middleware/auth.ts                                                                      +3 −2
+           ⋯ export async function auth(req, res, next) {
+   36  36     const token = req.headers.authorization?.slice(7)
+   37     -   const raw = await redis.get(`sess:${token}`)
+   38     -   const session = raw ? JSON.parse(raw) : null
+›      37 +   const session = flags.USE_LEGACY_SESSIONS
+          ✎ keep the legacy path behind the flag until next sprint
+       38 +     ? await legacyLookup(token)
+       39 +     : await sessionStore.get(token)
+   39  40     if (!session) return res.status(401).end()
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ j/k move · n/N file · c comment · x delete · s send · q close                            1 comment
