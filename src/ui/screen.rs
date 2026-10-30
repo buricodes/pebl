@@ -560,6 +560,64 @@ mod tests {
         insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
     }
 
+    fn prompts_view(step: PromptStep) -> PromptsView {
+        let row = |name: &str, preview: &str, clipboard: bool| PromptRow {
+            name: name.into(),
+            preview: preview.into(),
+            clipboard,
+        };
+        PromptsView {
+            query: String::new(),
+            sel: 0,
+            rows: vec![
+                row(
+                    "investigate ticket",
+                    "Investigate this ticket before changing any code. Read the code it touches.",
+                    true,
+                ),
+                row(
+                    "review diff",
+                    "Review this diff for edge cases and missing tests.",
+                    false,
+                ),
+                row(
+                    "write tests",
+                    "Write tests for what you just changed.",
+                    false,
+                ),
+            ],
+            total: 3,
+            target: "nova-api / auth-refactor".into(),
+            clip: Clip::Text {
+                first: "BUG-412: password reset email links expire immediately".into(),
+                lines: 14,
+            },
+            step,
+        }
+    }
+
+    #[test]
+    fn prompts_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Prompts(prompts_view(PromptStep::List));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn prompts_strip_minimum_naming() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Prompts(prompts_view(PromptStep::Name {
+            text: "triage".into(),
+            last: true,
+        }));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
     #[test]
     fn search_strip_minimum() {
         let t = transcript();

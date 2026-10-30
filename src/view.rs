@@ -224,6 +224,7 @@ pub enum Mode {
     Peek(Peek),
     Finish(Finish),
     Search(SearchView),
+    Prompts(PromptsView),
     Mark {
         count: usize,
     },
@@ -258,6 +259,46 @@ pub struct SearchView {
     pub project: String,
     pub projects: usize,
     pub indexing: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PromptsView {
+    pub query: String,
+    pub sel: usize,
+    pub rows: Vec<PromptRow>,
+    pub total: usize,
+    pub target: String,
+    pub clip: Clip,
+    pub step: PromptStep,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PromptRow {
+    pub name: String,
+    pub preview: String,
+    pub clipboard: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Clip {
+    #[default]
+    Unused,
+    Empty,
+    Text {
+        first: String,
+        lines: usize,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum PromptStep {
+    #[default]
+    List,
+    Name {
+        text: String,
+        last: bool,
+    },
+    ConfirmDelete,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

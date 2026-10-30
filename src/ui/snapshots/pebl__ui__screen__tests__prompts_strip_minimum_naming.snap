@@ -1,0 +1,29 @@
+---
+source: src/ui/screen.rs
+assertion_line: 610
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │ > refactor the auth middleware to use the new session st
+   ◆ migrate-staging  │
+   ○ docs-pass        │ ● Update(src/middleware/auth.ts)
+                      │   ⎿  Updated src/middleware/auth.ts with 3 additions
+ ▾ billing-svc      3 │
+   ● onboarding-flow  │ ✻ Refactoring… (47s · esc to interrupt)
+   ✕ e2e-tests        │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ save last prompt as triage                          → nova-api / auth-refactor
+ › investigate tic…  Investigate this ticket before changing any …  + clipboard
+   review diff       Review this diff for edge cases and missing tests.
+   write tests       Write tests for what you just changed.
+
+   clipboard  BUG-412: password reset email links expire immediately · 14 lines
+
+
+────────────────────────────────────────────────────────────────────────────────
+ enter save · esc back                                            ◆ 1  4 active

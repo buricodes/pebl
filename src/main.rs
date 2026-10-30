@@ -13,6 +13,7 @@ mod ipc;
 mod model;
 mod notify;
 mod paths;
+mod prompts;
 mod review;
 mod search;
 mod status;

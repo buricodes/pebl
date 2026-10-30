@@ -165,12 +165,12 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         &[
             ("ctrl+j / ctrl+k", "next / previous session"),
             ("ctrl+g", "jump to whatever needs you"),
-            ("ctrl+n", "new session in this project"),
-            ("ctrl+o", "new project"),
+            ("ctrl+n · ctrl+o", "new session · new project"),
             ("ctrl+b", "hide / show the sidebar"),
             ("ctrl+space", "sidebar ↔ Claude"),
             ("ctrl+f", "search past conversations"),
             ("ctrl+x", "mark sessions, send one prompt"),
+            ("ctrl+p", "saved prompts"),
             ("ctrl+q", "quit (sessions keep running)"),
         ],
     ),
@@ -196,7 +196,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "in the sidebar",
         &[
             ("j / k · enter", "move · open or resume"),
-            ("space", "fold a project"),
+            ("space · J / K", "fold · move a project"),
             ("p", "peek at a session and answer it"),
             ("d", "review its changes"),
             ("f", "finish a worktree"),

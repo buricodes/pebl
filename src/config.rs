@@ -92,6 +92,7 @@ pub struct Keys {
     pub search: String,
     pub mark: String,
     pub shell: String,
+    pub prompts: String,
 }
 
 impl Default for Keys {
@@ -110,6 +111,7 @@ impl Default for Keys {
             search: "C-f".into(),
             mark: "C-x".into(),
             shell: "C-t".into(),
+            prompts: "C-p".into(),
         }
     }
 }
@@ -129,6 +131,7 @@ impl Keys {
             (self.search.as_str(), "search"),
             (self.mark.as_str(), "mark"),
             (self.shell.as_str(), "shell"),
+            (self.prompts.as_str(), "prompts"),
         ]
         .into_iter()
         .filter(|(k, _)| !k.is_empty())

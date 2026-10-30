@@ -108,6 +108,19 @@ impl State {
         id
     }
 
+    pub fn move_project(&mut self, id: &str, by: i32) -> bool {
+        let Some(i) = self.projects.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        let j = (i as i64 + by as i64).clamp(0, self.projects.len() as i64 - 1) as usize;
+        if i == j {
+            return false;
+        }
+        let p = self.projects.remove(i);
+        self.projects.insert(j, p);
+        true
+    }
+
     pub fn set_status(&mut self, sid: &str, status: Status) -> bool {
         match self.session_mut(sid) {
             Some(s) if s.status != status => {
@@ -191,6 +204,26 @@ mod tests {
         assert_eq!(age(120), "2m");
         assert_eq!(age(3700), "1h");
         assert_eq!(age(3 * 86400), "3d");
+    }
+
+    #[test]
+    fn moves_projects_within_bounds() {
+        let mut st = State::default();
+        let a = st.add_project("/x/a".into(), None);
+        let b = st.add_project("/x/b".into(), None);
+        st.add_project("/x/c".into(), None);
+        let names = |st: &State| {
+            st.projects
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(st.move_project(&a, 1));
+        assert_eq!(names(&st), ["b", "a", "c"]);
+        assert!(!st.move_project(&b, -1));
+        assert!(st.move_project(&a, 5));
+        assert_eq!(names(&st), ["b", "c", "a"]);
+        assert!(!st.move_project("nope", 1));
     }
 
     #[test]

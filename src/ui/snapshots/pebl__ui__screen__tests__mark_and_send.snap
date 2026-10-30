@@ -1,5 +1,6 @@
 ---
 source: src/ui/screen.rs
+assertion_line: 620
 expression: "format!(\"{marking}\\n{sending}\")"
 ---
  marking                    3 │ nova-api / auth-refactor                                                ● running · 2m
@@ -41,7 +42,7 @@ expression: "format!(\"{marking}\\n{sending}\")"
  + new session         ctrl+n │ │ >
  + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- space mark · j/k move · a mark project · enter write prompt · esc cancel         3 marked   ~/code/nova-api · 4 active
+ space mark · j/k move · a mark project · enter write prompt · p saved prompt · esc cancel  3 marked   …-api · 4 active
 
  marking                    3 │ nova-api / auth-refactor                                                ● running · 2m
                               │

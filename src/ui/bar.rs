@@ -1,6 +1,9 @@
 use super::theme::Tok;
 use super::{keys, len, seg, seg_len, segb, Painter, Seg};
-use crate::view::{Broadcast, Finish, Layout, Mode, NewProject, Peek, SearchView, View};
+use crate::view::{
+    Broadcast, Clip, Finish, Layout, Mode, NewProject, Peek, PromptStep, PromptsView, SearchView,
+    View,
+};
 
 fn shell_line(v: &View) -> bool {
     matches!(v.mode, Mode::Normal)
@@ -17,8 +20,8 @@ pub fn height(v: &View) -> u16 {
         Mode::NewProject(np) => prompt_rows(np, 200).len() as u16 + 2,
         Mode::Peek(pk) => pk.lines.len() as u16 + 5,
         Mode::Broadcast(b) => broadcast_rows(b) as u16 + 2,
-        Mode::Search(_) if v.layout.short_keys() => 10,
-        Mode::Search(_) => 12,
+        Mode::Search(_) | Mode::Prompts(_) if v.layout.short_keys() => 10,
+        Mode::Search(_) | Mode::Prompts(_) => 12,
         Mode::Finish(f) => finish_rows(f, v.flash.as_deref()).len() as u16 + 2,
         _ => 1,
     }
@@ -48,6 +51,13 @@ pub fn render(v: &View, p: &mut Painter) {
     }
     if let Mode::Broadcast(b) = &v.mode {
         broadcast(b, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Prompts(pv) = &v.mode {
+        prompts(pv, p, !v.layout.short_keys());
         if h >= 2 {
             let w = p.w();
             p.hl(0, h - 2, w);
@@ -292,6 +302,132 @@ fn snippet(text: &str, q: &str, w: usize, sel: bool) -> Vec<Seg> {
         post = super::fit(&post, room);
     }
     vec![seg(pre, base), segb(m, Tok::Acc), seg(post, base)]
+}
+
+fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
+    let w = p.w();
+    let target = vec![seg("→ ", Tok::Dim), seg(pv.target.clone(), Tok::Mute)];
+    let tw = seg_len(&target) as i32;
+    let mut y = 0;
+    let line = match &pv.step {
+        PromptStep::Name { text, last } => vec![
+            segb(
+                if *last {
+                    "save last prompt as "
+                } else {
+                    "new prompt name "
+                },
+                Tok::Acc,
+            ),
+            seg(text.clone(), Tok::Fg),
+        ],
+        _ => vec![seg("/ ", Tok::Acc), seg(pv.query.clone(), Tok::Fg)],
+    };
+    if wide {
+        p.segs(1, y, &[segb("Saved prompts", Tok::Fg)]);
+        p.segs(w - 1 - tw, y, &target);
+        y += 1;
+    }
+    let x = match (&pv.step, wide) {
+        (_, true) => 3,
+        (PromptStep::Name { .. }, false) => 1,
+        _ => p.segs(1, y, &[segb("prompts ", Tok::Fg)]),
+    };
+    let e = p.segs(x, y, &line);
+    if !matches!(pv.step, PromptStep::ConfirmDelete) {
+        p.caret(e, y);
+    }
+    if wide {
+        let n = match pv.total {
+            1 => "1 prompt".to_string(),
+            n => format!("{n} prompts"),
+        };
+        p.rt(w - 1, y, &n, Tok::Dim, false);
+    } else {
+        p.segs(w - 1 - tw, y, &target);
+    }
+    y += if wide { 2 } else { 1 };
+    if pv.rows.is_empty() {
+        let msg = if pv.total == 0 {
+            "No saved prompts yet. ctrl+a adds one.".to_string()
+        } else {
+            format!("No prompts match “{}”.", pv.query.trim())
+        };
+        p.t(3, y, &msg, Tok::Mute, false);
+        return;
+    }
+    let name_w: i32 = if wide { 24 } else { 18 };
+    for (i, r) in pv.rows.iter().enumerate() {
+        let yy = y + i as i32;
+        let sel = i == pv.sel;
+        if sel {
+            p.bg(0, yy, w, Tok::Sel);
+            p.t(1, yy, "›", Tok::Acc, true);
+        }
+        p.t(
+            3,
+            yy,
+            &super::fit(&r.name, (name_w - 2) as usize),
+            Tok::Fg,
+            sel,
+        );
+        let tag = if r.clipboard { "+ clipboard" } else { "" };
+        let room = (w - 3 - name_w - len(tag) as i32 - 3).max(4) as usize;
+        p.t(
+            3 + name_w,
+            yy,
+            &super::fit(&r.preview, room),
+            if sel { Tok::Mute } else { Tok::Dim },
+            false,
+        );
+        if r.clipboard {
+            p.rt(w - 1, yy, tag, if sel { Tok::Acc } else { Tok::Dim }, false);
+        }
+    }
+    let foot = y + pv.rows.len() as i32 + 1;
+    if foot > p.h() - 3 {
+        return;
+    }
+    match (&pv.step, &pv.clip) {
+        (PromptStep::ConfirmDelete, _) => {
+            let name = pv.rows.get(pv.sel).map(|r| r.name.as_str()).unwrap_or("");
+            p.segs(
+                3,
+                foot,
+                &[
+                    seg("Delete ", Tok::Fg),
+                    segb(name.to_string(), Tok::Fg),
+                    seg("?  y deletes it, esc keeps it", Tok::Mute),
+                ],
+            );
+        }
+        (_, Clip::Empty) => {
+            p.t(
+                3,
+                foot,
+                "The clipboard is empty: copy the ticket or text first.",
+                Tok::Acc,
+                false,
+            );
+        }
+        (_, Clip::Text { first, lines }) => {
+            let more = match lines {
+                1 => String::new(),
+                n => format!(" · {n} lines"),
+            };
+            let room = (w - 3 - 11 - len(&more) as i32 - 1).max(4) as usize;
+            p.segs(
+                3,
+                foot,
+                &[
+                    seg("clipboard  ", Tok::Dim),
+                    seg(super::fit(first, room), Tok::Mute),
+                    seg(more, Tok::Dim),
+                ],
+            );
+        }
+        (_, Clip::Unused) => {}
+    }
 }
 
 fn search(sv: &SearchView, p: &mut Painter, wide: bool) {
@@ -634,6 +770,7 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ("j/k", "move"),
             ("a", "mark project"),
             ("enter", "write prompt"),
+            ("p", "saved prompt"),
             ("esc", "cancel"),
         ]),
         Mode::Broadcast(b) => {
@@ -644,6 +781,25 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 ("ctrl+u", "clear"),
             ])
         }
+        Mode::Prompts(pv) => match &pv.step {
+            PromptStep::Name { .. } => keys(&[("enter", "save"), ("esc", "back")]),
+            PromptStep::ConfirmDelete => keys(&[("y", "delete"), ("esc", "keep")]),
+            PromptStep::List if short => keys(&[
+                ("enter", "send"),
+                ("tab", "type"),
+                ("^a", "add"),
+                ("esc", "close"),
+            ]),
+            PromptStep::List => keys(&[
+                ("enter", "send"),
+                ("tab", "type first"),
+                ("ctrl+a", "add"),
+                ("ctrl+e", "edit"),
+                ("ctrl+s", "save last"),
+                ("ctrl+d", "delete"),
+                ("esc", "close"),
+            ]),
+        },
         Mode::Search(sv) if !sv.query.trim().is_empty() && sv.rows.is_empty() => {
             keys(&[("tab", "all projects"), ("esc", "close")])
         }

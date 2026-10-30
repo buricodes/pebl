@@ -1,0 +1,45 @@
+---
+source: src/ui/screen.rs
+assertion_line: 597
+expression: "snap(&v, 120, 40, Main::Lines(&t))"
+---
+ projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
+                              │
+ ▾ nova-api               ◆ 1 │
+ › ● auth-refactor         2m │
+   ◆ migrate-staging    input │
+   ○ docs-pass             1h │
+                              │
+ ▾ billing-svc              3 │
+   ● onboarding-flow      14s │
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │
+                              │
+ ▸ infra                    3 │
+                              │
+                              │
+                              │
+                              │
+                              │ > refactor the auth middleware to use the new session store
+                              │
+                              │ ● Update(src/middleware/auth.ts)
+                              │   ⎿  Updated src/middleware/auth.ts with 3 additions
+                              │
+                              │ ✻ Refactoring… (47s · esc to interrupt)
+                              │
+                              │ ╭────────────────────────────────────────────────────────────────────────────────
+ + new session         ctrl+n │ │ >
+ + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ Saved prompts                                                                               → nova-api / auth-refactor
+   /                                                                                                          3 prompts
+
+ › investigate ticket      Investigate this ticket before changing any code. Read the code it touches.      + clipboard
+   review diff             Review this diff for edge cases and missing tests.
+   write tests             Write tests for what you just changed.
+
+   clipboard  BUG-412: password reset email links expire immediately · 14 lines
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ enter send · tab type first · ctrl+a add · ctrl+e edit · ctrl+s save last · ctrl+d delete · esc close  …api · 4 active
