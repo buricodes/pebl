@@ -1,0 +1,45 @@
+---
+source: src/ui/screen.rs
+assertion_line: 619
+expression: "snap(&v, 120, 40, Main::Lines(&t))"
+---
+ projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
+                              │
+ ▾ nova-api               ◆ 1 │
+ › ● auth-refactor         2m │
+   ◆ migrate-staging    input │
+   ○ docs-pass             1h │
+                              │
+ ▾ billing-svc              3 │
+   ● onboarding-flow      14s │
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │
+                              │
+ ▸ infra                    3 │
+                              │
+                              │
+                              │
+                              │
+                              │ > refactor the auth middleware to use the new session store
+                              │
+                              │ ● Update(src/middleware/auth.ts)
+                              │   ⎿  Updated src/middleware/auth.ts with 3 additions
+                              │
+                              │ ✻ Refactoring… (47s · esc to interrupt)
+                              │
+                              │ ╭────────────────────────────────────────────────────────────────────────────────
+ + new session         ctrl+n │ │ >
+ + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ Saved prompts                                                                               → nova-api / auth-refactor
+   / …how I work is I ask every agent to look into the project and check the structure of the codebase first   1 prompt
+
+   Nothing matches. enter saves what you typed as a new prompt.
+   For a longer prompt, ctrl+a writes it in your editor.
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ enter save as prompt · ctrl+a write in editor · esc close                                   ~/code/nova-api · 4 active

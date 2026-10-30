@@ -606,13 +606,27 @@ mod tests {
     }
 
     #[test]
+    fn prompts_strip_typed_text_matches_nothing() {
+        let t = transcript();
+        let mut v = base();
+        let mut pv = prompts_view(PromptStep::List);
+        pv.query = "hey so how I work is I ask every agent to look into the project and check the structure of the codebase first".into();
+        pv.rows.clear();
+        pv.total = 1;
+        pv.clip = Clip::Unused;
+        v.mode = Mode::Prompts(pv);
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
     fn prompts_strip_minimum_naming() {
         let t = transcript();
         let mut v = base();
         v.layout = Layout::for_width(80, false);
         v.mode = Mode::Prompts(prompts_view(PromptStep::Name {
             text: "triage".into(),
-            last: true,
+            from: NameFrom::Last,
         }));
         v.focus = Focus::Bar;
         insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));

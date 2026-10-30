@@ -4298,6 +4298,33 @@ mod tests {
     }
 
     #[test]
+    fn typing_a_new_prompt_and_pressing_enter_saves_it() {
+        let (mut a, d) = app();
+        let p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        a.handle_ctl(&["prompts".into()]);
+        let body = "check the structure of the codebase first, then explain the plan";
+        typ_role(&mut a, Role::Bar, body);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker closed")
+        };
+        assert_eq!(
+            pv.step,
+            crate::view::PromptStep::Name {
+                text: "check the structure of".into(),
+                from: crate::view::NameFrom::Typed
+            }
+        );
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let saved =
+            std::fs::read_to_string(p.path().join("prompts/check-the-structure-of.md")).unwrap();
+        assert_eq!(saved, body);
+        assert!(!a.be.log.borrow().iter().any(|l| l.starts_with("send ")));
+    }
+
+    #[test]
     fn saved_prompt_goes_to_every_marked_session() {
         let (mut a, d) = app();
         let _p = with_prompts(&mut a);
