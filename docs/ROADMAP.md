@@ -4,7 +4,7 @@
 - [x] Private tmux socket, spawn `claude` in a detached session, swap it into a split
 - [x] Inject hooks per session without editing `~/.claude/settings.json`
 - [x] Confirm hooks see `PEBL_SESSION_ID`; log every event payload to a file
-- [ ] Map real `Notification` payloads (permission vs idle)
+- [x] Map real `Notification` payloads (permission vs idle)
 
 ## M1: MVP
 - [x] `pebl` opens the two-pane layout, tmux chrome hidden
@@ -25,10 +25,11 @@
 - [x] `config.toml` keybinding overrides
 
 ## M3: Polish
-- [ ] Per-repo `pebl.toml` worktree setup steps (copy `.env`, install deps)
+- [x] Per-repo `pebl.toml` worktree setup steps (copy `.env`, install deps)
 - [x] Session resume via `claude --resume` on exited sessions
 - [x] Heuristic status fallback when hooks are missing
-- [ ] Homebrew tap + `cargo install`
+- [x] `cargo install --git`, `pebl update`, release notices
+- [ ] Homebrew tap and prebuilt binaries
 
 ## Extras (not in the original plan)
 - [x] Global summon hotkey (`pebl hotkey install`)
