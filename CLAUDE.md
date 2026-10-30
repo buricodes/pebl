@@ -4,7 +4,7 @@ Instructions for Claude Code working on this repo.
 
 ## Project
 
-pebl is a Rust TUI (Ratatui + crossterm) that orchestrates Claude Code sessions via a private tmux server, with status from Claude Code hooks. Read `docs/SPEC.md` and `docs/ARCHITECTURE.md` (especially "As built") before larger changes. The visual source of truth is the maintainer's Claude Design file `Orchestrator TUI.dc.html`, which is not part of this repo; `cargo run -- preview` and the snapshot tests in `src/ui/screen.rs` show every screen as built.
+pebl is a Rust TUI (Ratatui + crossterm) that orchestrates Claude Code sessions via a private tmux server, with status from Claude Code hooks. Read `docs/SPEC.md` (v1, shipped), `docs/PRD-v2.md` (what's next) and `docs/ARCHITECTURE.md` (especially "As built") before larger changes. The visual source of truth is the maintainer's Claude Design file `Orchestrator TUI.dc.html`, which is not part of this repo; `cargo run -- preview` and the snapshot tests in `src/ui/screen.rs` show every screen as built.
 
 ## Commands
 
