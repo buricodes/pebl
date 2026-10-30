@@ -1,5 +1,6 @@
 mod attention;
 mod auto_checks;
+mod notes;
 mod saved_prompts;
 
 use crate::backend::{Arrangement, SessionBackend, SpawnSpec, UiBackend, UiPanes};
@@ -78,6 +79,10 @@ enum IMode {
     Inbox {
         sel: usize,
     },
+    Note {
+        pid: String,
+        text: String,
+    },
     DrawerResize,
 }
 
@@ -100,6 +105,7 @@ pub struct Env {
     pub sock: PathBuf,
     pub editor: String,
     pub prompts: PathBuf,
+    pub memory: PathBuf,
     pub clipboard: fn() -> Option<String>,
     pub notify: crate::config::Notify,
 }
@@ -1473,6 +1479,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             "--settings".into(),
             self.env.settings.display().to_string(),
         ];
+        argv.extend(self.memory_args(&s.project));
         if resume {
             argv.extend(["--resume".into(), s.claude_id.clone()]);
         } else {
@@ -2841,6 +2848,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let IMode::Prompts(pk) = self.mode.clone() {
             return self.prompts_key(pk, k);
         }
+        if let IMode::Note { pid, text } = self.mode.clone() {
+            return self.note_key(pid, text, k);
+        }
         if k.ctrl {
             return Ok(());
         }
@@ -2865,7 +2875,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 Ok(())
             }
-            IMode::Broadcast { .. } | IMode::Prompts(_) => Ok(()),
+            IMode::Broadcast { .. } | IMode::Prompts(_) | IMode::Note { .. } => Ok(()),
             IMode::Inbox { sel } => self.inbox_key(sel, k),
             IMode::Search {
                 query,
@@ -3188,6 +3198,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 };
                 self.review(&sid)?;
             }
+            Char('N') => self.start_note()?,
             Char('t') | Char('T') => {
                 let sid = match &self.cursor {
                     Some(CurRef::Session(sid)) => sid.clone(),
@@ -3431,6 +3442,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 },
             },
             IMode::Filter { text } => Mode::Filter { text: text.clone() },
+            IMode::Note { pid, text } => Mode::Note {
+                project: self
+                    .st
+                    .project(pid)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default(),
+                text: text.clone(),
+            },
             IMode::Finish { info, .. } => Mode::Finish(info.clone()),
             IMode::Search {
                 query,
@@ -3925,6 +3944,7 @@ mod tests {
             sock: "/x.sock".into(),
             editor: "true".into(),
             prompts: std::env::temp_dir().join(format!("pebl-test-prompts-{}", std::process::id())),
+            memory: std::env::temp_dir().join(format!("pebl-test-memory-{}", std::process::id())),
             clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
@@ -4406,6 +4426,41 @@ mod tests {
         wait_for_badge(&mut a, CheckBadge::Passed);
         key(&mut a, Role::Sidebar, KeyCode::Char('t'));
         assert!(a.view().flash.unwrap().contains("no failing checks"));
+    }
+
+    #[test]
+    fn project_notes_are_added_and_given_to_new_sessions() {
+        let (mut a, d) = app();
+        let store = tempfile::tempdir().unwrap();
+        a.env.memory = store.path().to_path_buf();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        assert!(!a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.contains("--append-system-prompt-file")));
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('N'));
+        assert!(matches!(a.view().mode, Mode::Note { ref text, .. } if text.is_empty()));
+        typ(&mut a, "we use pnpm, never npm");
+        key(&mut a, Role::Sidebar, KeyCode::Enter);
+        assert!(a.view().flash.unwrap().starts_with("noted for"));
+        let file = a.memory_file(&a.st.projects[0].id.clone()).unwrap();
+        assert!(file.starts_with(store.path()));
+        assert!(std::fs::read_to_string(&file)
+            .unwrap()
+            .ends_with("- we use pnpm, never npm\n"));
+        a.handle_ctl(&["new".into(), String::new(), "b".into(), String::new()]);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!(
+                "claude --settings /s.json --append-system-prompt-file {} --session-id",
+                file.display()
+            )),
+            "{log}"
+        );
     }
 
     #[test]

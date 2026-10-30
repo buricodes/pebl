@@ -205,7 +205,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("r · x", "rename · kill"),
             ("e", "open the folder in your editor"),
             ("/", "filter"),
-            ("m", "mute mascot, chimes, alerts"),
+            ("N · m", "add a project note · mute alerts"),
         ],
     ),
 ];

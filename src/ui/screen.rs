@@ -660,6 +660,17 @@ mod tests {
     }
 
     #[test]
+    fn note_input() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Note {
+            project: "nova-api".into(),
+            text: "we use pnpm, never npm".into(),
+        };
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
     fn inbox_strip() {
         let t = transcript();
         let mut v = base();

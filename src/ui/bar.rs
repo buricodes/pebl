@@ -726,7 +726,7 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
         }
     }
     let x = p.segs(0, y, &left);
-    if let Mode::Filter { .. } = v.mode {
+    if let Mode::Filter { .. } | Mode::Note { .. } = v.mode {
         p.caret(x, y);
     }
     let w = p.w();
@@ -921,6 +921,10 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             l
         }
         Mode::Filter { text } => vec![seg(" / ", Tok::Acc), seg(text.clone(), Tok::Fg)],
+        Mode::Note { project, text } => vec![
+            segb(format!(" note for {project}: "), Tok::Acc),
+            seg(super::fit_tail(text, if short { 24 } else { 60 }), Tok::Fg),
+        ],
         Mode::Normal if v.flash.is_some() => vec![seg(
             format!(" {}", v.flash.clone().unwrap_or_default()),
             Tok::Acc,
@@ -1002,6 +1006,15 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 .into_iter()
                 .skip(1),
         );
+        return (left, right);
+    }
+    if let Mode::Note { .. } = v.mode {
+        let list = if short {
+            vec![("enter", "add"), ("esc", "cancel")]
+        } else {
+            vec![("enter", "add"), ("ctrl+e", "all notes"), ("esc", "cancel")]
+        };
+        right.extend(keys(&list).into_iter().skip(1));
         return (left, right);
     }
     if let Some(m) = v.marking {

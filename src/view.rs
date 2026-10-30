@@ -236,6 +236,10 @@ pub enum Mode {
     Search(SearchView),
     Prompts(PromptsView),
     Inbox(InboxView),
+    Note {
+        project: String,
+        text: String,
+    },
     Mark {
         count: usize,
     },

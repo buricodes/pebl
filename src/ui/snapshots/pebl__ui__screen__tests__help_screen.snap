@@ -38,7 +38,7 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   r · x            rename · kill
                               │   e                open the folder in your editor
                               │   /                filter
-                              │   m                mute mascot, chimes, alerts
+                              │   N · m            add a project note · mute alerts
  + new session         ctrl+n │ macOS: alt keys need Option as Meta (Terminal › Settings › Profiles › Keyboard)
  + new project         ctrl+o │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ The first time, press **enter** to add the current folder and start a session. p
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 
@@ -128,6 +128,12 @@ auto_fix = 0      # send failures back to Claude on their own, up to this many t
 ```
 
 The sidebar shows `…` while they run, then `✓` or `✕` next to the session. Runs are skipped when no files changed since the last one, so turns that only answer questions cost nothing. When a check fails, `t` sends Claude the failing commands with the end of their output and asks it to fix them; `T` runs the checks again now. With `auto_fix = 2`, pebl sends failures back by itself up to twice, and the count resets when you send the next prompt yourself. Each command has 10 minutes.
+
+### Project notes
+
+`N` in the sidebar adds a one-line note to the selected project, like "we use pnpm, never npm" or "don't touch /legacy". Every new or resumed session in that project starts with the notes in its system prompt, so you never repeat them. `ctrl+e` while typing a note opens all of them in your editor.
+
+Notes live in `~/.pebl/memory/`, outside your repo. To share them with your team instead, create a `PEBL.md` in the project folder: pebl then reads and adds to that file. Sessions already running keep the notes they started with.
 
 ### Saved prompts
 

@@ -11,6 +11,7 @@ mod git;
 mod history;
 mod hotkey;
 mod ipc;
+mod memory;
 mod model;
 mod notify;
 mod paths;

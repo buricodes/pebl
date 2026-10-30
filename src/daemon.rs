@@ -38,6 +38,7 @@ pub fn run() -> Result<()> {
         claude: find_in_path("claude").unwrap_or_else(|| "claude".into()),
         settings: paths::claude_settings(),
         prompts: paths::prompts(),
+        memory: paths::memory(),
         clipboard: crate::prompts::clipboard,
         sock: sock.clone(),
         editor: crate::config::load(&paths::config())
