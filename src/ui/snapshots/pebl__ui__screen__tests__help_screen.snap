@@ -31,8 +31,8 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   j / k · enter    move · open or resume
                               │   space · J / K    fold · move a project
                               │   p                peek at a session and answer it
-                              │   d                review its changes
-                              │   f                finish a worktree
+                              │   d · R            review its changes · start a reviewer agent
+                              │   f · P            finish a worktree · queue its plan's tasks
                               │   c · w            open in a new column · worktree session
                               │   t · T            send failing checks to Claude · run checks
                               │   r · x            rename · kill

@@ -91,7 +91,7 @@ The first time, press **enter** to add the current folder and start a session. p
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `R` starts a reviewer agent, `P` queues the tasks from a session's plan, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 
@@ -150,6 +150,19 @@ pebl queue add --attempts 3 "Make the dashboard query faster"
 pebl queue add --file tasks.md        # every open "- [ ]" item; indented lines below one join its prompt
 pebl queue ls
 ```
+
+### Agents working together
+
+**Reviewer.** `R` on a session starts a second Claude in the same folder that reads the first one's diff (and its task, if it came from the queue) without changing anything, then lists what it found. When it's done, `d` on the original session opens the review with those comments already on the right lines: edit or delete them, then `s` sends them back. Add this to `pebl.toml` to review every queued task automatically once its checks pass:
+
+```toml
+[review]
+auto = true
+```
+
+**Planner.** Give a session a big goal with the "plan into tasks" saved prompt (it asks for a `- [ ]` checklist and changes nothing). Then `P` on that session lists the tasks: `space` unticks any you don't want, `enter` queues the rest, each in its own worktree.
+
+**Merge conflicts.** If `m` in the finish strip hits conflicts, pebl backs the merge out, lists the conflicting files, and `c` asks the session to rebase onto the target branch and resolve them. pebl never commits for you; press `f` then `m` again once it's done.
 
 ### Project notes
 

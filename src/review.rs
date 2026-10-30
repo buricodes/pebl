@@ -11,6 +11,54 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Finding {
+    pub file: String,
+    pub line: usize,
+    pub text: String,
+}
+
+pub fn parse_findings(text: &str) -> Option<Vec<Finding>> {
+    let start = text.rfind("```review")?;
+    let body = &text[start + "```review".len()..];
+    let body = body.split("```").next().unwrap_or("");
+    Some(
+        body.lines()
+            .filter_map(|l| {
+                let l = l.trim().trim_start_matches(['-', '*', ' ']);
+                let (file, rest) = l.split_once(':')?;
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                let line = digits.parse().ok()?;
+                let text = rest[digits.len()..]
+                    .trim_start_matches([':', ' ', '-', '—'])
+                    .trim();
+                (!file.trim().is_empty() && !text.is_empty()).then(|| Finding {
+                    file: file.trim().to_string(),
+                    line,
+                    text: text.to_string(),
+                })
+            })
+            .collect(),
+    )
+}
+
+pub fn findings_file(dir: &Path, sid: &str) -> std::path::PathBuf {
+    dir.join(format!("{sid}.json"))
+}
+
+pub fn save_findings(dir: &Path, sid: &str, found: &[Finding]) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(findings_file(dir, sid), serde_json::to_string(found)?)?;
+    Ok(())
+}
+
+fn load_findings(sid: &str) -> Vec<Finding> {
+    std::fs::read_to_string(findings_file(&paths::reviews(), sid))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 pub struct Review {
     pub title: String,
     pub diff: Diff,
@@ -45,6 +93,27 @@ impl Review {
             msg: None,
             armed: false,
         }
+    }
+
+    pub fn add_findings(&mut self, found: &[Finding]) -> Vec<String> {
+        let mut missed = Vec::new();
+        for f in found {
+            let best = (0..self.diff.rows.len())
+                .filter(|i| self.diff.file_of(*i) == Some(f.file.as_str()))
+                .filter_map(|i| self.line_at(i).map(|(n, _)| (i, n.abs_diff(f.line))))
+                .min_by_key(|(_, d)| *d);
+            match best {
+                Some((i, _)) => {
+                    let c = self.comments.entry(i).or_default();
+                    if !c.is_empty() {
+                        c.push_str(" · ");
+                    }
+                    c.push_str(&f.text);
+                }
+                None => missed.push(format!("{}:{}", f.file, f.line)),
+            }
+        }
+        missed
     }
 
     fn visual(&self) -> Vec<Vis> {
@@ -326,7 +395,10 @@ impl Review {
                 }
                 let sent = ipc::ctl(&paths::sock(), &["reply".into(), sid.into(), self.prompt()]);
                 match sent {
-                    Ok(out) if !out.starts_with("error") => return true,
+                    Ok(out) if !out.starts_with("error") => {
+                        let _ = std::fs::remove_file(findings_file(&paths::reviews(), sid));
+                        return true;
+                    }
                     Ok(out) => self.msg = Some(out),
                     Err(e) => self.msg = Some(format!("{e:#}")),
                 }
@@ -347,6 +419,21 @@ pub fn run(sid: &str, cwd: &Path, title: &str, color: ColorMode) -> Result<()> {
         },
     };
     let mut r = Review::new(title.to_string(), diff);
+    let found = load_findings(sid);
+    if !found.is_empty() {
+        let missed = r.add_findings(&found);
+        r.msg = Some(match missed.as_slice() {
+            [] => format!(
+                "{} comments from the reviewer: edit them, then s sends them",
+                found.len()
+            ),
+            m => format!(
+                "reviewer comments loaded; {} were on unchanged lines: {}",
+                m.len(),
+                m.join(", ")
+            ),
+        });
+    }
     terminal::enable_raw_mode()?;
     execute!(
         std::io::stdout(),
@@ -424,6 +511,25 @@ mod tests {
         let mut buf = Buffer::empty(area);
         r.draw(&mut Painter::new(&mut buf, area, ColorMode::Truecolor));
         insta::assert_snapshot!(crate::ui::screen::to_text(&buf));
+    }
+
+    #[test]
+    fn parses_reviewer_findings_and_places_them_on_changed_lines() {
+        let reply = "Looks mostly fine.\n\n```review\nsrc/middleware/auth.ts:38: legacyLookup can return undefined; guard it\n- src/middleware/auth.ts:40 — the 401 skips logging\nREADME.md:3: mention the flag\nnot a finding\n```\n";
+        let found = parse_findings(reply).unwrap();
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[1].line, 40);
+        assert_eq!(found[1].text, "the 401 skips logging");
+        assert_eq!(parse_findings("```review\n```"), Some(vec![]));
+        assert_eq!(parse_findings("no block"), None);
+        let mut r = sample();
+        r.comments.clear();
+        let missed = r.add_findings(&found);
+        assert_eq!(missed, vec!["README.md:3"]);
+        let p = r.prompt();
+        assert!(p.contains("src/middleware/auth.ts:38"), "{p}");
+        assert!(p.contains("guard it"), "{p}");
+        assert!(p.contains("the 401 skips logging"), "{p}");
     }
 
     #[test]

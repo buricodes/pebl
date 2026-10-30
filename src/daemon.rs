@@ -39,6 +39,7 @@ pub fn run() -> Result<()> {
         settings: paths::claude_settings(),
         prompts: paths::prompts(),
         memory: paths::memory(),
+        reviews: paths::reviews(),
         clipboard: crate::prompts::clipboard,
         sock: sock.clone(),
         editor: crate::config::load(&paths::config())

@@ -63,5 +63,7 @@
 - [ ] P3 Budgets (skipped for now: seat plan, no per-token cost)
 - [x] P4 Task queue (`q`, `pebl queue add`, tasks.md, `max_parallel`)
 - [x] P4 Best-of-N with a compare view and winner pick
-- [ ] P5 Reviewer agent, planner and workers, merge-conflict helper
+- [x] P5 Reviewer agent (`R`, `[review] auto`), findings loaded into the review popup
+- [x] P5 Planner: `P` queues the tasks from a session's checklist
+- [x] P5 Merge-conflict helper in the finish flow
 - [ ] P6 Triggers, recipes, replay and checkpoints

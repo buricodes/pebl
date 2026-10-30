@@ -1,5 +1,5 @@
 use super::auto_checks::Progress;
-use super::{edit, App, CurRef, IMode};
+use super::{edit, App, CurRef, IMode, Place};
 use crate::backend::{SessionBackend, UiBackend};
 use crate::ipc::{Key, KeyCode};
 use crate::model::{age, now, short_count, Status, Task, TaskState};
@@ -68,6 +68,20 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 None => continue,
             };
+            let auto = self
+                .st
+                .tasks
+                .iter()
+                .find(|t| t.id == id)
+                .filter(|t| state == TaskState::Review && t.sessions.len() == 1)
+                .and_then(|t| {
+                    let path = self.st.project(&t.project)?.path.clone();
+                    queue::auto_review(&path).then(|| t.sessions[0].clone())
+                });
+            if let Some(sid) = auto {
+                let _ = self.start_reviewer(&sid);
+                continue;
+            }
             match state {
                 TaskState::Review => self.flash(format!("“{title}” is ready for review · q")),
                 TaskState::Failed => self.flash(format!("“{title}” failed · q")),
@@ -166,7 +180,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let mut err = None;
         for n in 1..=t.attempts {
             let name = queue::session_name(&t, n);
-            match self.create_session(&t.project, &name, &t.prompt, true) {
+            match self.create_session(&t.project, &name, &t.prompt, Place::Worktree) {
                 Ok(sid) => sids.push(sid),
                 Err(e) => {
                     err = Some(format!("{e:#}"));

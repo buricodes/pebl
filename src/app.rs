@@ -1,6 +1,7 @@
 mod attention;
 mod auto_checks;
 mod notes;
+mod reviewer;
 mod saved_prompts;
 mod task_queue;
 
@@ -31,6 +32,13 @@ const SEARCH_ROWS: usize = 6;
 pub enum CurRef {
     Project(String),
     Session(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Place {
+    Project,
+    Worktree,
+    In(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +132,7 @@ pub struct Env {
     pub editor: String,
     pub prompts: PathBuf,
     pub memory: PathBuf,
+    pub reviews: PathBuf,
     pub clipboard: fn() -> Option<String>,
     pub notify: crate::config::Notify,
 }
@@ -189,6 +198,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     last_prompt: HashMap<String, String>,
     checks: HashMap<String, auto_checks::CheckState>,
     checks_done: auto_checks::Finished,
+    reviewers: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -286,6 +296,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             last_prompt: HashMap::new(),
             checks: HashMap::new(),
             checks_done: Default::default(),
+            reviewers: HashMap::new(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -705,6 +716,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         self.refresh_shells();
         self.collect_checks();
         self.run_queue();
+        self.collect_reviews();
         self.deliver_queued();
         self.notify();
         if self.ticks.is_multiple_of(3) {
@@ -1533,7 +1545,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
         prompt: &str,
         worktree: bool,
     ) -> Result<String> {
-        let sid = self.create_session(pid, name, prompt, worktree)?;
+        let place = if worktree {
+            Place::Worktree
+        } else {
+            Place::Project
+        };
+        let sid = self.create_session(pid, name, prompt, place)?;
         self.activate(&sid);
         Ok(sid)
     }
@@ -1543,7 +1560,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         pid: &str,
         name: &str,
         prompt: &str,
-        worktree: bool,
+        place: Place,
     ) -> Result<String> {
         let p = self
             .st
@@ -1556,7 +1573,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         } else {
             name.trim().to_string()
         };
-        let wt = if worktree {
+        let wt = if place == Place::Worktree {
             let dir = if auto_name {
                 format!("session-{}", self.st.sessions_of(pid).count() + 1)
             } else {
@@ -1578,7 +1595,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             name,
             claude_id: uuid::Uuid::new_v4().to_string(),
             pane: None,
-            cwd: wt.clone().unwrap_or(p.path.clone()),
+            cwd: match place {
+                Place::In(dir) => dir,
+                _ => wt.clone().unwrap_or(p.path.clone()),
+            },
             worktree: wt,
             status: Status::Idle,
             since: now(),
@@ -3322,6 +3342,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.review(&sid)?;
             }
             Char('N') => self.start_note()?,
+            Char('R') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to the session whose work should be reviewed"),
+                };
+                self.start_reviewer(&sid)?;
+            }
             Char('q') => self.start_queue()?,
             Char('P') => {
                 let sid = match &self.cursor {
@@ -4089,6 +4116,7 @@ mod tests {
             editor: "true".into(),
             prompts: std::env::temp_dir().join(format!("pebl-test-prompts-{}", std::process::id())),
             memory: std::env::temp_dir().join(format!("pebl-test-memory-{}", std::process::id())),
+            reviews: std::env::temp_dir().join(format!("pebl-test-reviews-{}", std::process::id())),
             clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
@@ -4735,6 +4763,63 @@ mod tests {
         );
         assert!(matches!(a.view().mode, Mode::Queue(_)));
         assert_eq!(a.st.tasks[0].state, crate::model::TaskState::Running);
+    }
+
+    #[test]
+    fn reviewer_reads_the_authors_folder_and_its_findings_are_saved() {
+        let (mut a, d) = app();
+        git_repo(d.path());
+        let reviews = tempfile::tempdir().unwrap();
+        a.env.reviews = reviews.path().to_path_buf();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "auth".into(), String::new()]);
+        let author = a.st.sessions[0].id.clone();
+        a.handle_hook(
+            &author,
+            "UserPromptSubmit",
+            &serde_json::json!({"prompt": "Move sessions to the new store"}),
+        );
+        a.handle_hook(&author, "Stop", &serde_json::Value::Null);
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(author.clone()));
+        key(&mut a, Role::Sidebar, KeyCode::Char('R'));
+        let r =
+            a.st.sessions
+                .iter()
+                .find(|s| s.name == "review-auth")
+                .unwrap()
+                .clone();
+        assert_eq!(r.cwd, a.st.sessions[0].cwd);
+        assert!(r.worktree.is_none());
+        let log = a.be.log.borrow().join("\n");
+        assert!(log.contains("Move sessions to the new store"), "{log}");
+        assert!(
+            log.contains("Don't change, create or delete any files"),
+            "{log}"
+        );
+        a.cursor = Some(CurRef::Session(author.clone()));
+        key(&mut a, Role::Sidebar, KeyCode::Char('R'));
+        assert!(a.view().flash.unwrap().contains("already looking"));
+
+        a.tokens.insert(
+            r.id.clone(),
+            (
+                d.path().join("none.jsonl"),
+                0,
+                history::Tokens {
+                    last_text: "Two issues.\n```review\nsrc/a.ts:3: guard the empty list\nsrc/b.ts:9: log the 401\n```".into(),
+                    ..Default::default()
+                },
+            ),
+        );
+        a.tick();
+        assert!(!reviews.path().join(format!("{author}.json")).exists());
+        a.handle_hook(&r.id, "Stop", &serde_json::Value::Null);
+        a.tick();
+        let saved = std::fs::read_to_string(reviews.path().join(format!("{author}.json"))).unwrap();
+        assert!(saved.contains("guard the empty list") && saved.contains("\"line\":9"));
+        assert!(a.view().flash.unwrap().contains("2 comments"));
+        assert!(a.reviewers.is_empty());
     }
 
     #[test]
