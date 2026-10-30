@@ -1,0 +1,7 @@
+---
+source: src/ui/screen.rs
+assertion_line: 856
+expression: "format!(\"{}\\n{}\", last(&side), last(&main))"
+---
+ t send failing checks to Claude · f finish: merge or PR · enter open · ? all keys     ◆ 1 waiting ctrl+g    · 4 active
+ ctrl+p prompts · ctrl+y inbox · ctrl+t shell · ctrl+space sidebar · ctrl+j/k switch  ◆ 1 waiting ctrl+g   … · 4 active

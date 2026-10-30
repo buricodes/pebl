@@ -994,7 +994,13 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
             s.0 = fit_left(&s.0, len(&s.0).saturating_sub(over));
         }
     }
-    let room = (p.w().max(0) as usize).saturating_sub(seg_len(&right) + 3);
+    let keep = left.len() >= 4 && left[left.len() - 2].0 == "?";
+    let tail = if keep {
+        left.split_off(left.len() - 3)
+    } else {
+        Vec::new()
+    };
+    let room = (p.w().max(0) as usize).saturating_sub(seg_len(&right) + seg_len(&tail) + 3);
     while seg_len(&left) > room && left.len() > 1 {
         while let Some(s) = left.pop() {
             if s.0 == " · " || left.len() <= 1 {
@@ -1002,6 +1008,7 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
             }
         }
     }
+    left.extend(tail);
     let x = p.segs(0, y, &left);
     if let Mode::Filter { .. } | Mode::Note { .. } = v.mode {
         p.caret(x, y);
@@ -1283,6 +1290,30 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             (k("ctrl+g", "^g"), "go to waiting"),
             (k("ctrl+q", "^q"), "quit"),
         ]),
+        Mode::Normal if !v.hints.is_empty() => {
+            let list: Vec<(String, String)> = v
+                .hints
+                .iter()
+                .enumerate()
+                .filter(|(i, (k, _))| !short || *i < 3 || k == "?")
+                .map(|(_, (k, l))| {
+                    let k = if short {
+                        k.replace("ctrl+", "^")
+                    } else {
+                        k.clone()
+                    };
+                    let l = if short {
+                        l.split([':', '(']).next().unwrap_or(l).trim().to_string()
+                    } else {
+                        l.clone()
+                    };
+                    (k, l)
+                })
+                .collect();
+            let refs: Vec<(&str, &str)> =
+                list.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect();
+            keys(&refs)
+        }
         Mode::Normal if v.focus == crate::view::Focus::Sidebar && !short => keys(&[
             ("enter", "open"),
             ("p", "peek"),

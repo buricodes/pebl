@@ -823,6 +823,48 @@ mod tests {
         insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
     }
 
+    fn hinted(focus: Focus) -> View {
+        let mut v = base();
+        v.focus = focus;
+        let h = |k: &str, l: &str| (k.to_string(), l.to_string());
+        v.hints = match focus {
+            Focus::Main => vec![
+                h("ctrl+p", "prompts"),
+                h("ctrl+y", "inbox"),
+                h("ctrl+t", "shell"),
+                h("ctrl+space", "sidebar"),
+                h("ctrl+j/k", "switch"),
+            ],
+            _ => vec![
+                h("t", "send failing checks to Claude"),
+                h("f", "finish: merge or PR"),
+                h("enter", "open"),
+                h("d", "review changes"),
+                h("R", "ask a reviewer"),
+                h("?", "all keys"),
+            ],
+        };
+        v
+    }
+
+    #[test]
+    fn context_hints() {
+        let t = transcript();
+        let side = snap(&hinted(Focus::Sidebar), 120, 40, Main::Lines(&t));
+        let main = snap(&hinted(Focus::Main), 120, 40, Main::Lines(&t));
+        let last = |s: &str| s.lines().last().unwrap_or("").to_string();
+        insta::assert_snapshot!(format!("{}\n{}", last(&side), last(&main)));
+    }
+
+    #[test]
+    fn context_hints_minimum() {
+        let t = transcript();
+        let mut v = hinted(Focus::Sidebar);
+        v.layout = Layout::for_width(80, false);
+        let out = snap(&v, 80, 24, Main::Lines(&t));
+        insta::assert_snapshot!(out.lines().last().unwrap_or(""));
+    }
+
     #[test]
     fn inbox_strip() {
         let t = transcript();

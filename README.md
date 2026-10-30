@@ -91,7 +91,7 @@ The first time, press **enter** to add the current folder and start a session. p
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `R` starts a reviewer agent, `P` queues the tasks from a session's plan, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+The bottom bar shows the few keys that matter for what's selected right now (a waiting session offers `enter answer it`, one with failing checks offers `t`, a project offers `q task queue`), and `?` lists every key. With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `R` starts a reviewer agent, `P` queues the tasks from a session's plan, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 

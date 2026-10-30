@@ -1,5 +1,6 @@
 mod attention;
 mod auto_checks;
+mod hints;
 mod notes;
 mod reviewer;
 mod saved_prompts;
@@ -3704,6 +3705,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             path,
             stage: self.stage_kind().unwrap_or(Stage::Empty),
             flash: self.flash.as_ref().map(|(m, _)| m.clone()),
+            hints: self.hints(),
             bell: self.bell,
             osc: self.osc.clone(),
             color: self.color,
@@ -4891,6 +4893,31 @@ mod tests {
         a.set_focus(Focus::Sidebar);
         key(&mut a, Role::Sidebar, KeyCode::Char('T'));
         assert!(a.view().flash.unwrap().contains("no checks found"));
+    }
+
+    #[test]
+    fn hints_follow_what_is_selected() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        let keys_of = |a: &App<Fake>| -> Vec<String> {
+            a.view().hints.iter().map(|(k, _)| k.clone()).collect()
+        };
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(ids[0].clone()));
+        assert_eq!(keys_of(&a), vec!["enter", "d", "R", "r", "x", "?"]);
+        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
+        assert_eq!(a.view().hints[0], ("enter".into(), "answer it".into()));
+        assert_eq!(keys_of(&a).len(), 6);
+        assert_eq!(keys_of(&a).last().unwrap(), "?");
+        a.cursor = Some(CurRef::Project(a.st.projects[0].id.clone()));
+        assert_eq!(keys_of(&a), vec!["ctrl+n", "q", "N", "space", "?"]);
+        a.set_focus(Focus::Main);
+        assert_eq!(a.view().hints[0], ("ctrl+p".into(), "prompts".into()));
+        assert!(!keys_of(&a).contains(&"?".to_string()));
     }
 
     #[test]

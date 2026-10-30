@@ -14,6 +14,8 @@ pub struct View {
     pub path: String,
     pub stage: Stage,
     pub flash: Option<String>,
+    #[serde(default)]
+    pub hints: Vec<(String, String)>,
     pub bell: u64,
     pub osc: Option<(u64, String)>,
     pub color: ColorMode,
