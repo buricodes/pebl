@@ -117,7 +117,7 @@ When Claude's last reply contains a shell code block, the status bar offers `alt
 
 ### Checks after every turn
 
-Each time a session finishes a turn that changed files, pebl runs the project's own checks in the background, in that session's folder, and shows `…` while they run, then `✓` or `✕` next to the session. There's nothing to set up: pebl finds them itself.
+Each time a session finishes a turn that changed files (turns that only answer questions cost nothing), pebl runs the project's own checks in the background, in that session's folder, and shows `…` while they run, then `✓` or `✕` next to the session. There's nothing to set up: pebl finds them itself.
 
 | Project has | pebl runs |
 |---|---|
@@ -135,7 +135,7 @@ To choose the checks yourself without touching the repo, put a `[checks]` table 
 [checks]
 test = "npm test"
 lint = "npx eslint src"
-auto_fix = 2      # send failures back to Claude by itself, up to twice per task
+auto_fix = 2      # send failures back to Claude by itself, up to twice per task; resets when you send the next prompt yourself
 ```
 
 An empty `[checks]` table turns them off for that project; `checks = false` in `~/.pebl/config.toml` turns detection off everywhere.
@@ -144,23 +144,9 @@ An empty `[checks]` table turns them off for that project; `checks = false` in `
 
 `ctrl+y` lists every session that needs you, across all projects: waiting ones first (longest waiting at the top, with what they want, like `wants to run Bash`), then ones that stopped with an error, then ones that finished while you weren't looking. `enter` opens one, `p` peeks and answers it without switching, `x` dismisses an error or finished one, `esc` closes. Finished sessions drop off on their own once you've looked at them, or after 15 minutes. With two or more waiting, the status bar shows `ctrl+y list`.
 
-### Checks after every turn
-
-Add a `[checks]` table to the project's `pebl.toml` and pebl runs those commands in the background each time a session finishes a turn, in that session's folder (its worktree, if it has one):
-
-```toml
-[checks]
-test = "npm test"
-lint = "npm run lint"
-typecheck = "npx tsc --noEmit"
-auto_fix = 0      # send failures back to Claude on their own, up to this many times per task
-```
-
-The sidebar shows `…` while they run, then `✓` or `✕` next to the session. Runs are skipped when no files changed since the last one, so turns that only answer questions cost nothing. When a check fails, `t` sends Claude the failing commands with the end of their output and asks it to fix them; `T` runs the checks again now. With `auto_fix = 2`, pebl sends failures back by itself up to twice, and the count resets when you send the next prompt yourself. Each command has 10 minutes.
-
 ### Task queue and best of N
 
-`q` in the sidebar opens the selected project's queue. `a` adds a task (type it, `enter`); pebl starts it in a fresh git worktree session as soon as a slot is free, without switching your screen. When its turn ends and the project's checks pass, it moves to "needs review" and the next task starts. Two run at a time by default:
+`q` in the sidebar opens the selected project's queue. `a` adds a task (type it, `enter`); pebl starts it in a fresh git worktree session as soon as a slot is free, without switching your screen. When its turn ends and the project's checks pass, it moves to "needs review" and the next task starts. Two run at a time by default; to change that, add this to the project's settings (`~/.pebl/projects/…` or `pebl.toml`):
 
 ```toml
 [queue]
@@ -209,7 +195,7 @@ Put `{{clipboard}}` in a prompt where pasted text should go. Copy a ticket, pres
 
 ### Worktrees
 
-`w` starts a session in its own git worktree on a `pebl/<name>` branch. If the repo has a `pebl.toml`, pebl copies the listed files into the new worktree and runs the setup commands before Claude starts:
+`w` starts a session in its own git worktree on a `pebl/<name>` branch. If the project's settings (its file under `~/.pebl/projects/`, or a `pebl.toml` in the repo) have a `[worktree]` table, pebl copies the listed files into the new worktree and runs the setup commands before Claude starts:
 
 ```toml
 [worktree]
