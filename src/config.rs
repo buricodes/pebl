@@ -13,6 +13,7 @@ pub struct Config {
     pub notify: Notify,
     pub statusline: Option<bool>,
     pub update_check: Option<bool>,
+    pub telemetry: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

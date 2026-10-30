@@ -17,6 +17,7 @@ mod review;
 mod search;
 mod status;
 mod store;
+mod telemetry;
 mod ui;
 mod update;
 mod view;
@@ -634,6 +635,14 @@ fn doctor() -> Result<()> {
             "  · version  {} (couldn't check GitHub for a newer one)",
             update::current()
         ),
+    }
+    let tele = crate::config::load(&paths::config())
+        .ok()
+        .and_then(|c| c.telemetry);
+    if telemetry::enabled(tele) {
+        println!("  · usage ping  on: an anonymous id and the version, once a day (telemetry = false turns it off)");
+    } else {
+        println!("  · usage ping  off");
     }
     if !ok {
         bail!("some checks failed");
