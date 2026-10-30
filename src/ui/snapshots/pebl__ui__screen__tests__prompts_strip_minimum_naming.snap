@@ -1,6 +1,6 @@
 ---
 source: src/ui/screen.rs
-assertion_line: 610
+assertion_line: 929
 expression: "snap(&v, 80, 24, Main::Lines(&t))"
 ---
  projects           3 │ nova-api / auth-refactor                     ● running
@@ -21,9 +21,9 @@ expression: "snap(&v, 80, 24, Main::Lines(&t))"
  › investigate tic…  Investigate this ticket before changing any …  + clipboard
    review diff       Review this diff for edge cases and missing tests.
    write tests       Write tests for what you just changed.
+   fix ticket        Investigate, fix, test, review and comm…  recipe · 5 steps
 
    clipboard  BUG-412: password reset email links expire immediately · 14 lines
-
 
 ────────────────────────────────────────────────────────────────────────────────
  enter save · esc back                                            ◆ 1  4 active

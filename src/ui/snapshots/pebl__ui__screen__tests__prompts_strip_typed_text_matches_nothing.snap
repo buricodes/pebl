@@ -1,6 +1,6 @@
 ---
 source: src/ui/screen.rs
-assertion_line: 619
+assertion_line: 916
 expression: "snap(&v, 120, 40, Main::Lines(&t))"
 ---
  projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
@@ -31,8 +31,8 @@ expression: "snap(&v, 120, 40, Main::Lines(&t))"
  + new session         ctrl+n │ │ >
  + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- Saved prompts                                                                               → nova-api / auth-refactor
-   / …how I work is I ask every agent to look into the project and check the structure of the codebase first   1 prompt
+ Prompts and recipes                                                                         → nova-api / auth-refactor
+   / … how I work is I ask every agent to look into the project and check the structure of the codebase first   1 saved
 
    Nothing matches. enter saves what you typed as a new prompt.
    For a longer prompt, ctrl+a writes it in your editor.

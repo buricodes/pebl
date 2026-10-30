@@ -365,6 +365,8 @@ pub struct PromptRow {
     pub name: String,
     pub preview: String,
     pub clipboard: bool,
+    #[serde(default)]
+    pub steps: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -385,6 +387,12 @@ pub enum PromptStep {
     Name {
         text: String,
         from: NameFrom,
+    },
+    Var {
+        name: String,
+        text: String,
+        n: usize,
+        of: usize,
     },
     ConfirmDelete,
 }

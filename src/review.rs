@@ -42,6 +42,23 @@ pub fn parse_findings(text: &str) -> Option<Vec<Finding>> {
     )
 }
 
+pub fn findings_prompt(found: &[Finding]) -> String {
+    let mut out = String::from(
+        "A reviewer looked at your changes. Address each point (or say why you disagree), then summarise what you changed.\n",
+    );
+    for f in found {
+        out.push_str(&format!("\n- {}:{}: {}", f.file, f.line, f.text));
+    }
+    out
+}
+
+pub fn read_findings(dir: &Path, sid: &str) -> Vec<Finding> {
+    std::fs::read_to_string(findings_file(dir, sid))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 pub fn findings_file(dir: &Path, sid: &str) -> std::path::PathBuf {
     dir.join(format!("{sid}.json"))
 }
@@ -53,10 +70,7 @@ pub fn save_findings(dir: &Path, sid: &str, found: &[Finding]) -> Result<()> {
 }
 
 fn load_findings(sid: &str) -> Vec<Finding> {
-    std::fs::read_to_string(findings_file(&paths::reviews(), sid))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    read_findings(&paths::reviews(), sid)
 }
 
 pub struct Review {

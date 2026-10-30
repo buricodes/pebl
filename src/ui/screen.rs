@@ -583,6 +583,7 @@ mod tests {
 
     fn prompts_view(step: PromptStep) -> PromptsView {
         let row = |name: &str, preview: &str, clipboard: bool| PromptRow {
+            steps: 0,
             name: name.into(),
             preview: preview.into(),
             clipboard,
@@ -606,8 +607,16 @@ mod tests {
                     "Write tests for what you just changed.",
                     false,
                 ),
+                PromptRow {
+                    steps: 5,
+                    ..row(
+                        "fix ticket",
+                        "Investigate, fix, test, review and commit a copied ticket",
+                        true,
+                    )
+                },
             ],
-            total: 3,
+            total: 4,
             target: "nova-api / auth-refactor".into(),
             clip: Clip::Text {
                 first: "BUG-412: password reset email links expire immediately".into(),

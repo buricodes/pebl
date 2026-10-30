@@ -36,6 +36,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     pub(super) fn run_queue(&mut self) {
+        self.drive_recipes();
         self.update_tasks();
         self.start_tasks();
     }
@@ -91,6 +92,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn task_progress(&self, t: &Task) -> Option<(TaskState, String)> {
+        if !t.plan.is_empty() && t.state == TaskState::Running {
+            return None;
+        }
         let live: Vec<_> = t
             .sessions
             .iter()
@@ -672,6 +676,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn running_detail(&self, t: &Task) -> String {
+        if let Some(step) = t.plan.get(t.at) {
+            return format!("step {} of {}: {}", t.at + 1, t.plan.len(), step.label());
+        }
         let live: Vec<_> = t
             .sessions
             .iter()

@@ -2,8 +2,11 @@ use super::{edit, App, IMode};
 use crate::backend::{SessionBackend, UiBackend};
 use crate::ipc::{Key, KeyCode};
 use crate::prompts::{self, Prompt};
+use crate::recipes::{self, Recipe};
 use crate::view::{Clip, Focus, NameFrom, PromptRow, PromptStep, PromptsView};
 use anyhow::{anyhow, bail, Result};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 const ROWS: usize = 6;
 
@@ -14,6 +17,65 @@ pub(super) struct Picker {
     targets: Vec<String>,
     marked: bool,
     step: PromptStep,
+    values: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Entry {
+    Prompt(Prompt),
+    Recipe(Recipe),
+}
+
+impl Entry {
+    fn name(&self) -> &str {
+        match self {
+            Entry::Prompt(p) => &p.name,
+            Entry::Recipe(r) => &r.name,
+        }
+    }
+
+    fn path(&self) -> &PathBuf {
+        match self {
+            Entry::Prompt(p) => &p.path,
+            Entry::Recipe(r) => &r.path,
+        }
+    }
+
+    fn uses_clipboard(&self) -> bool {
+        match self {
+            Entry::Prompt(p) => p.uses_clipboard(),
+            Entry::Recipe(r) => r.uses_clipboard(),
+        }
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        match self {
+            Entry::Prompt(p) => p.matches(query),
+            Entry::Recipe(r) => {
+                let q = query.trim().to_lowercase();
+                q.is_empty()
+                    || r.name.to_lowercase().contains(&q)
+                    || r.description.to_lowercase().contains(&q)
+            }
+        }
+    }
+
+    fn row(&self) -> PromptRow {
+        match self {
+            Entry::Prompt(p) => PromptRow {
+                name: p.name.clone(),
+                preview: p.preview(),
+                clipboard: p.uses_clipboard(),
+                steps: 0,
+            },
+            Entry::Recipe(r) => PromptRow {
+                name: r.name.clone(),
+                preview: r.description.clone(),
+                clipboard: r.uses_clipboard(),
+                steps: r.steps.len(),
+            },
+        }
+    }
 }
 
 impl<B: SessionBackend + UiBackend> App<B> {
@@ -38,6 +100,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             targets,
             marked,
             step: PromptStep::List,
+            values: BTreeMap::new(),
         });
         self.refresh_prompts();
         self.apply_layout();
@@ -47,21 +110,34 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     pub(super) fn refresh_prompts(&mut self) {
         self.saved = prompts::load(&self.env.prompts);
+        let project = self
+            .active
+            .as_deref()
+            .and_then(|sid| self.st.session(sid))
+            .and_then(|s| self.st.project(&s.project))
+            .map(|p| p.path.clone());
+        self.recipes = recipes::load(&self.env.recipes, project.as_deref());
         self.clip = (self.env.clipboard)();
     }
 
-    fn shown(&self, query: &str) -> Vec<&Prompt> {
-        self.saved.iter().filter(|p| p.matches(query)).collect()
+    fn shown(&self, query: &str) -> Vec<Entry> {
+        let prompts = self.saved.iter().cloned().map(Entry::Prompt);
+        let recipes = self.recipes.iter().cloned().map(Entry::Recipe);
+        prompts
+            .chain(recipes)
+            .filter(|e| e.matches(query))
+            .collect()
     }
 
-    fn selected(&self, pk: &Picker) -> Option<Prompt> {
-        self.shown(&pk.query).get(pk.sel).map(|p| (*p).clone())
+    fn selected(&self, pk: &Picker) -> Option<Entry> {
+        self.shown(&pk.query).into_iter().nth(pk.sel)
     }
 
     pub(super) fn prompts_key(&mut self, mut pk: Picker, k: Key) -> Result<()> {
         let res = match std::mem::take(&mut pk.step) {
             PromptStep::List => self.list_key(&mut pk, k),
             PromptStep::Name { text, from } => self.name_key(&mut pk, text, from, k),
+            PromptStep::Var { name, text, .. } => self.var_key(&mut pk, name, text, k),
             PromptStep::ConfirmDelete => self.delete_key(&mut pk, k),
         };
         match res {
@@ -90,9 +166,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
             }
             KeyCode::Enter | KeyCode::Tab => {
-                let p = self
+                let entry = self
                     .selected(pk)
                     .ok_or_else(|| anyhow!("no prompt to send; ctrl+a adds one"))?;
+                let p = match entry {
+                    Entry::Recipe(r) if k.code == KeyCode::Tab => {
+                        bail!("“{}” runs on its own: enter starts it", r.name)
+                    }
+                    Entry::Recipe(r) => return self.begin_recipe(pk, r),
+                    Entry::Prompt(p) => p,
+                };
                 let text = p.fill(self.clip.as_deref())?;
                 if k.code == KeyCode::Tab {
                     self.type_prompt(pk, &text)?;
@@ -120,10 +203,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 let p = self
                     .selected(pk)
                     .ok_or_else(|| anyhow!("no prompt to edit"))?;
-                self.launch_editor(&p.path)?;
+                self.launch_editor(p.path())?;
                 self.flash(format!(
                     "editing “{}”: the list updates when you save",
-                    p.name
+                    p.name()
                 ));
             }
             KeyCode::Char('d') if k.ctrl => {
@@ -196,13 +279,75 @@ impl<B: SessionBackend + UiBackend> App<B> {
     fn delete_key(&mut self, pk: &mut Picker, k: Key) -> Result<bool> {
         if k.code == KeyCode::Char('y') {
             if let Some(p) = self.selected(pk) {
-                std::fs::remove_file(&p.path)
-                    .map_err(|e| anyhow!("deleting {}: {e}", p.path.display()))?;
+                std::fs::remove_file(p.path())
+                    .map_err(|e| anyhow!("deleting {}: {e}", p.path().display()))?;
                 self.refresh_prompts();
                 pk.sel = pk.sel.min(self.shown(&pk.query).len().saturating_sub(1));
-                self.flash(format!("deleted “{}”", p.name));
+                self.flash(format!("deleted “{}”", p.name()));
             }
         }
+        Ok(false)
+    }
+
+    fn begin_recipe(&mut self, pk: &mut Picker, r: Recipe) -> Result<bool> {
+        if pk.targets.len() != 1 {
+            bail!("a recipe starts its own session: open the picker from one session");
+        }
+        pk.values.clear();
+        self.next_var(pk, &r)
+    }
+
+    fn next_var(&mut self, pk: &mut Picker, r: &Recipe) -> Result<bool> {
+        let vars = r.vars();
+        if let Some(name) = vars.iter().find(|v| !pk.values.contains_key(*v)) {
+            pk.step = PromptStep::Var {
+                name: name.clone(),
+                text: String::new(),
+                n: pk.values.len() + 1,
+                of: vars.len(),
+            };
+            return Ok(false);
+        }
+        let plan = r.fill(&pk.values, self.clip.as_deref())?;
+        let pid = self
+            .st
+            .session(&pk.targets[0])
+            .map(|s| s.project.clone())
+            .ok_or_else(|| anyhow!("that session is gone"))?;
+        self.queue_recipe(&pid, r, plan)?;
+        self.finish_prompts(pk);
+        self.flash(format!(
+            "started “{}” in a new worktree · q shows its steps",
+            r.name
+        ));
+        Ok(true)
+    }
+
+    fn var_key(&mut self, pk: &mut Picker, name: String, mut text: String, k: Key) -> Result<bool> {
+        let Some(Entry::Recipe(r)) = self.selected(pk) else {
+            pk.step = PromptStep::List;
+            return Ok(false);
+        };
+        match k.code {
+            KeyCode::Esc => {
+                pk.values.clear();
+                return Ok(false);
+            }
+            KeyCode::Enter if !text.trim().is_empty() => {
+                pk.values.insert(name, text.trim().to_string());
+                return self.next_var(pk, &r);
+            }
+            KeyCode::Char('u') if k.ctrl => text.clear(),
+            _ if k.ctrl => {}
+            _ => edit(&mut text, &k, false),
+        }
+        let vars = r.vars();
+        pk.step = PromptStep::Var {
+            n: pk.values.len() + 1,
+            of: vars.len(),
+            name,
+            text,
+        };
         Ok(false)
     }
 
@@ -261,11 +406,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .iter()
             .skip(start)
             .take(ROWS)
-            .map(|p| PromptRow {
-                name: p.name.clone(),
-                preview: p.preview(),
-                clipboard: p.uses_clipboard(),
-            })
+            .map(Entry::row)
             .collect();
         let clip = match shown.get(pk.sel) {
             Some(p) if p.uses_clipboard() => clip_summary(self.clip.as_deref()),
@@ -290,7 +431,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             query: pk.query.clone(),
             sel: pk.sel - start,
             rows,
-            total: self.saved.len(),
+            total: self.saved.len() + self.recipes.len(),
             target,
             clip,
             step: pk.step.clone(),

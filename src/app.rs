@@ -2,6 +2,7 @@ mod attention;
 mod auto_checks;
 mod hints;
 mod notes;
+mod recipe_runner;
 mod reviewer;
 mod saved_prompts;
 mod task_queue;
@@ -134,6 +135,7 @@ pub struct Env {
     pub prompts: PathBuf,
     pub memory: PathBuf,
     pub reviews: PathBuf,
+    pub recipes: PathBuf,
     pub detect_checks: bool,
     pub clipboard: fn() -> Option<String>,
     pub notify: crate::config::Notify,
@@ -196,11 +198,13 @@ pub struct App<B: SessionBackend + UiBackend> {
     prev_active: Option<String>,
     pub update: Option<String>,
     saved: Vec<crate::prompts::Prompt>,
+    recipes: Vec<crate::recipes::Recipe>,
     clip: Option<String>,
     last_prompt: HashMap<String, String>,
     checks: HashMap<String, auto_checks::CheckState>,
     checks_done: auto_checks::Finished,
     reviewers: HashMap<String, String>,
+    sent: HashMap<String, Instant>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -294,11 +298,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
             prev_active: None,
             update: None,
             saved: Vec::new(),
+            recipes: Vec::new(),
             clip: None,
             last_prompt: HashMap::new(),
             checks: HashMap::new(),
             checks_done: Default::default(),
             reviewers: HashMap::new(),
+            sent: HashMap::new(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -474,6 +480,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 })
             }
             ["queue-ls"] => Ok(self.queue_ls()),
+            ["recipe-run", project, name, vars @ ..] => self.recipe_from_cli(project, name, vars),
             ["inbox"] => {
                 self.start_inbox();
                 Ok(String::new())
@@ -658,6 +665,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                         self.last_prompt.insert(sid.into(), p.trim().to_string());
                     }
                 }
+                self.sent.remove(sid);
                 self.prompt_submitted(sid);
             }
             "PostToolUse" => {
@@ -2363,6 +2371,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 later += 1;
             } else {
                 self.be.send_text(&pane, text, true)?;
+                self.sent.insert(sid.clone(), Instant::now());
                 now_n += 1;
             }
         }
@@ -4123,6 +4132,7 @@ mod tests {
             memory: std::env::temp_dir().join(format!("pebl-test-memory-{}", std::process::id())),
             reviews: std::env::temp_dir().join(format!("pebl-test-reviews-{}", std::process::id())),
             detect_checks: true,
+            recipes: std::env::temp_dir().join(format!("pebl-test-recipes-{}", std::process::id())),
             clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
@@ -4430,6 +4440,7 @@ mod tests {
     fn with_prompts(a: &mut App<Fake>) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         a.env.prompts = dir.path().join("prompts");
+        a.env.recipes = dir.path().join("recipes");
         dir
     }
 
@@ -4505,7 +4516,7 @@ mod tests {
         let Mode::Prompts(pv) = a.view().mode else {
             panic!("picker closed")
         };
-        assert_eq!(pv.total, 3);
+        assert_eq!(pv.total, 4);
     }
 
     #[test]
@@ -4834,6 +4845,115 @@ mod tests {
         a.cursor = Some(CurRef::Session(r.id.clone()));
         let hints: Vec<String> = a.view().hints.into_iter().map(|(k, _)| k).collect();
         assert!(!hints.contains(&"t".to_string()) && !hints.contains(&"R".to_string()));
+    }
+
+    fn settle(a: &mut App<Fake>, sid: &str) {
+        let started = Instant::now();
+        loop {
+            a.tick();
+            if a.check_progress(sid) != auto_checks::Progress::Busy {
+                a.tick();
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "checks never settled"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn turn(a: &mut App<Fake>, sid: &str) {
+        a.handle_hook(sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(sid, "Stop", &serde_json::Value::Null);
+        settle(a, sid);
+    }
+
+    #[test]
+    fn a_recipe_walks_its_steps_fixing_checks_and_feeding_back_the_review() {
+        use crate::model::TaskState;
+        let (mut a, d) = app();
+        std::fs::write(d.path().join("Makefile"), "test:\n\ttest -f DONE\n").unwrap();
+        git_repo(d.path());
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+                .args(args)
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+        };
+        git(&["add", "."]);
+        git(&["commit", "-qm", "make"]);
+        let store = tempfile::tempdir().unwrap();
+        a.env.recipes = store.path().join("recipes");
+        a.env.reviews = store.path().join("reviews");
+        std::fs::create_dir_all(&a.env.recipes).unwrap();
+        std::fs::write(
+            a.env.recipes.join("fix.toml"),
+            "name = \"fix it\"\nsteps = [\"plan {{ ticket }}\", \"implement it\", \"checks\", \"review\", \"commit it\"]\n",
+        )
+        .unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        let out = a.handle_ctl(&[
+            "recipe-run".into(),
+            String::new(),
+            "fix it".into(),
+            "ticket=BUG-7".into(),
+        ]);
+        assert_eq!(out, "started “fix it” in a new worktree");
+        let sid = a.st.tasks[0].sessions[0].clone();
+        let pane = a.st.session(&sid).unwrap().pane.clone().unwrap();
+        let wt = a.st.session(&sid).unwrap().cwd.clone();
+        let sent = |a: &App<Fake>, text: &str| {
+            a.be.log
+                .borrow()
+                .iter()
+                .any(|l| l.starts_with(&format!("send {pane} \"{text}")))
+        };
+        assert!(a.be.log.borrow().iter().any(|l| l.contains("plan BUG-7")));
+        assert_eq!(a.st.tasks[0].title, "fix it: plan BUG-7");
+
+        turn(&mut a, &sid);
+        assert!(sent(&a, "implement it"));
+        a.handle_ctl(&["queue".into()]);
+        let Mode::Queue(q) = a.view().mode else {
+            panic!("queue not open")
+        };
+        assert_eq!(q.rows[0].detail, "step 2 of 5: implement it");
+        key(&mut a, Role::Bar, KeyCode::Esc);
+
+        turn(&mut a, &sid);
+        a.tick();
+        assert!(sent(&a, "The project's checks failed"));
+        assert_eq!(a.st.tasks[0].at, 2);
+        std::fs::write(wt.join("DONE"), "").unwrap();
+        turn(&mut a, &sid);
+        a.tick();
+        assert_eq!(a.st.tasks[0].at, 3);
+        let r = a.st.tasks[0].reviewer.clone().expect("reviewer started");
+        a.tokens.insert(
+            r.clone(),
+            (
+                d.path().join("none.jsonl"),
+                0,
+                history::Tokens {
+                    last_text: "```review\nsrc/x.ts:4: handle the empty case\n```".into(),
+                    ..Default::default()
+                },
+            ),
+        );
+        a.handle_hook(&r, "Stop", &serde_json::Value::Null);
+        a.tick();
+        a.tick();
+        assert!(sent(&a, "A reviewer looked at your changes"));
+        turn(&mut a, &sid);
+        a.tick();
+        assert!(sent(&a, "commit it"));
+        turn(&mut a, &sid);
+        a.tick();
+        assert_eq!(a.st.tasks[0].state, TaskState::Review);
+        assert_eq!(a.st.tasks[0].note, "recipe done · test passed");
     }
 
     #[test]

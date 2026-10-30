@@ -84,6 +84,16 @@ pub struct Task {
     pub note: String,
     #[serde(default)]
     pub runs: u32,
+    #[serde(default)]
+    pub plan: Vec<crate::recipes::Step>,
+    #[serde(default)]
+    pub at: usize,
+    #[serde(default)]
+    pub fixes: u8,
+    #[serde(default)]
+    pub reviewer: Option<String>,
+    #[serde(default)]
+    pub review_sent: bool,
     pub created: u64,
     #[serde(default)]
     pub started: Option<u64>,
@@ -181,6 +191,11 @@ impl State {
             sessions: Vec::new(),
             note: String::new(),
             runs: 0,
+            plan: Vec::new(),
+            at: 0,
+            fixes: 0,
+            reviewer: None,
+            review_sent: false,
             created: now(),
             started: None,
             ended: None,

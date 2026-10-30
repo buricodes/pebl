@@ -179,6 +179,32 @@ auto = true
 
 **Merge conflicts.** If `m` in the finish strip hits conflicts, pebl backs the merge out, lists the conflicting files, and `c` asks the session to rebase onto the target branch and resolve them. pebl never commits for you; press `f` then `m` again once it's done.
 
+### Recipes
+
+A recipe is a list of steps pebl walks through on its own, each starting when the one before has finished. Recipes show up in the `ctrl+p` list (tagged `recipe · N steps`); `enter` runs one as a queued task in its own worktree, and `q` shows which step it's on. pebl adds a "fix ticket" recipe to start from: copy a ticket, `ctrl+p`, pick it, and it investigates, implements, gets the checks green, has a reviewer look, applies the review and commits.
+
+```toml
+name = "fix ticket"
+description = "Investigate, fix, test, review and commit a copied ticket"
+steps = [
+  "Investigate this ticket and plan the fix. Don't change code yet.\n\n{{clipboard}}",
+  "Implement the fix you planned.",
+  "checks",
+  "review",
+  "Commit your changes with a clear message.",
+]
+```
+
+A step is a prompt, or one of:
+
+| Step | What pebl does |
+|---|---|
+| `checks` | waits for the project's checks; if they fail, sends the failures to Claude, up to twice, then stops the recipe |
+| `review` | starts a reviewer and sends its findings back to Claude |
+| `open PR` | asks Claude to commit, push and open a pull request with `gh` |
+
+`{{clipboard}}` is replaced by what you copied; any other `{{name}}` is asked for when the recipe starts. Your recipes live in `~/.pebl/recipes/`; a repo can share some in `.pebl/recipes/`. From the command line: `pebl recipe ls`, `pebl recipe add <file or URL>`, `pebl recipe run "fix ticket" --var ticket=BUG-12`.
+
 ### Project notes
 
 `N` in the sidebar adds a one-line note to the selected project, like "we use pnpm, never npm" or "don't touch /legacy". Every new or resumed session in that project starts with the notes in its system prompt, so you never repeat them. `ctrl+e` while typing a note opens all of them in your editor.

@@ -18,6 +18,7 @@ mod paths;
 mod project;
 mod prompts;
 mod queue;
+mod recipes;
 mod review;
 mod search;
 mod status;
@@ -68,6 +69,11 @@ enum Cmd {
     Checks {
         #[arg(help = "Project folder (default: the current directory)")]
         path: Option<std::path::PathBuf>,
+    },
+    #[command(about = "Multi-step workflows that run on their own, step after step")]
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeCmd,
     },
     #[command(about = "Queue tasks that run in their own worktrees, a few at a time")]
     Queue {
@@ -137,6 +143,30 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum RecipeCmd {
+    #[command(about = "List your recipes and the current project's shared ones")]
+    Ls,
+    #[command(about = "Install a recipe from a .toml file or a URL")]
+    Add { source: String },
+    #[command(about = "Run a recipe as a queued task in a new worktree")]
+    Run {
+        name: String,
+        #[arg(
+            long,
+            short,
+            help = "Project name or path (default: the selected project)"
+        )]
+        project: Option<String>,
+        #[arg(
+            long = "var",
+            short,
+            help = "A value for a {{placeholder}}, as name=value"
+        )]
+        vars: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum QueueCmd {
     #[command(about = "Add a task, or every open \"- [ ]\" item from a Markdown file")]
     Add {
@@ -201,9 +231,9 @@ fn run(cli: Cli) -> Result<()> {
                 Some(p) => p,
                 None => std::env::current_dir()?.display().to_string(),
             };
-            let shown = name.clone().unwrap_or_else(|| {
-                model::folder_name(&model::untilde(&path))
-            });
+            let shown = name
+                .clone()
+                .unwrap_or_else(|| model::folder_name(&model::untilde(&path)));
             let mut args = vec!["add".to_string(), path];
             args.extend(name);
             let reply = ctl_started(&args)?;
@@ -224,6 +254,52 @@ fn run(cli: Cli) -> Result<()> {
             prompt.unwrap_or_default(),
         ])?),
         Some(Cmd::Checks { path }) => show_checks(path),
+        Some(Cmd::Recipe { action }) => match action {
+            RecipeCmd::Ls => {
+                let here = std::env::current_dir().ok();
+                for r in recipes::load(&paths::recipes(), here.as_deref()) {
+                    let vars = r.vars();
+                    let needs = if vars.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  needs: {}", vars.join(", "))
+                    };
+                    println!(
+                        "{:<20} {} steps  {}{needs}",
+                        r.name,
+                        r.steps.len(),
+                        model::tilde(&r.path)
+                    );
+                }
+                Ok(())
+            }
+            RecipeCmd::Add { source } => {
+                let text = if source.starts_with("https://") || source.starts_with("http://") {
+                    let out = std::process::Command::new("curl")
+                        .args(["-fsSL", "-m", "20", &source])
+                        .output()
+                        .context("running curl")?;
+                    if !out.status.success() {
+                        bail!("couldn't download {source}");
+                    }
+                    String::from_utf8_lossy(&out.stdout).into_owned()
+                } else {
+                    std::fs::read_to_string(&source).with_context(|| format!("reading {source}"))?
+                };
+                let path = recipes::install(&paths::recipes(), &text)?;
+                println!("installed {}", model::tilde(&path));
+                Ok(())
+            }
+            RecipeCmd::Run {
+                name,
+                project,
+                vars,
+            } => {
+                let mut args = vec!["recipe-run".to_string(), project.unwrap_or_default(), name];
+                args.extend(vars);
+                print_reply(&ctl_started(&args)?)
+            }
+        },
         Some(Cmd::Queue { action }) => match action {
             QueueCmd::Add {
                 prompt,

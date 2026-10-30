@@ -655,10 +655,7 @@ fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
     let w = p.w();
     let target = vec![seg("→ ", Tok::Dim), seg(pv.target.clone(), Tok::Mute)];
     let tw = seg_len(&target) as i32;
-    let count = match pv.total {
-        1 => "1 prompt".to_string(),
-        n => format!("{n} prompts"),
-    };
+    let count = format!("{} saved", pv.total);
     let mut y = 0;
     let (label, field) = match &pv.step {
         PromptStep::Name { text, from } => (
@@ -672,16 +669,20 @@ fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
             ),
             text.as_str(),
         ),
+        PromptStep::Var { name, text, n, of } => (
+            segb(format!("{name} ({n} of {of}) "), Tok::Acc),
+            text.as_str(),
+        ),
         _ => (seg("/ ", Tok::Acc), pv.query.as_str()),
     };
     if wide {
-        p.segs(1, y, &[segb("Saved prompts", Tok::Fg)]);
+        p.segs(1, y, &[segb("Prompts and recipes", Tok::Fg)]);
         p.segs(w - 1 - tw, y, &target);
         y += 1;
     }
     let x = match (&pv.step, wide) {
         (_, true) => 3,
-        (PromptStep::Name { .. }, false) => 1,
+        (PromptStep::Name { .. } | PromptStep::Var { .. }, false) => 1,
         _ => p.segs(1, y, &[segb("prompts ", Tok::Fg)]),
     };
     let right = if wide { len(&count) as i32 } else { tw };
@@ -729,7 +730,12 @@ fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
             Tok::Fg,
             sel,
         );
-        let tag = if r.clipboard { "+ clipboard" } else { "" };
+        let tag = match (r.steps, r.clipboard) {
+            (0, true) => "+ clipboard".to_string(),
+            (0, false) => String::new(),
+            (n, _) => format!("recipe · {n} steps"),
+        };
+        let tag = tag.as_str();
         let room = (w - 3 - name_w - len(tag) as i32 - 3).max(4) as usize;
         p.t(
             3 + name_w,
@@ -738,7 +744,7 @@ fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
             if sel { Tok::Mute } else { Tok::Dim },
             false,
         );
-        if r.clipboard {
+        if !tag.is_empty() {
             p.rt(w - 1, yy, tag, if sel { Tok::Acc } else { Tok::Dim }, false);
         }
     }
@@ -1185,6 +1191,7 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         ]),
         Mode::Prompts(pv) => match &pv.step {
             PromptStep::Name { .. } => keys(&[("enter", "save"), ("esc", "back")]),
+            PromptStep::Var { .. } => keys(&[("enter", "next"), ("esc", "back")]),
             PromptStep::ConfirmDelete => keys(&[("y", "delete"), ("esc", "keep")]),
             PromptStep::List if pv.rows.is_empty() => keys(&[
                 ("enter", "save as prompt"),

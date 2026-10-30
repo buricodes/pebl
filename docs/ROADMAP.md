@@ -66,4 +66,6 @@
 - [x] P5 Reviewer agent (`R`, `[review] auto`), findings loaded into the review popup
 - [x] P5 Planner: `P` queues the tasks from a session's checklist
 - [x] P5 Merge-conflict helper in the finish flow
-- [ ] P6 Triggers, recipes, replay and checkpoints
+- [x] P6 Recipes: multi-step workflows in ctrl+p and `pebl recipe`, with checks and review steps
+- [ ] P6 Replay and checkpoints
+- [ ] P6 Triggers (CI, issues, schedule)

@@ -170,7 +170,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("ctrl+space", "sidebar ↔ Claude"),
             ("ctrl+f", "search past conversations"),
             ("ctrl+x", "mark sessions, send one prompt"),
-            ("ctrl+p", "saved prompts"),
+            ("ctrl+p", "saved prompts and recipes"),
             ("ctrl+q", "quit (sessions keep running)"),
         ],
     ),
