@@ -1,3 +1,5 @@
+mod saved_prompts;
+
 use crate::backend::{Arrangement, SessionBackend, SpawnSpec, UiBackend, UiPanes};
 use crate::ipc::{Input, Key, KeyCode, Role};
 use crate::model::{age, now, tilde, untilde, Session, State, Status};
@@ -8,8 +10,9 @@ use crate::view::{
 };
 use crate::{complete, git, history, paths, status};
 use anyhow::{anyhow, bail, Result};
+use saved_prompts::Picker;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const FLASH_FOR: Duration = Duration::from_secs(4);
@@ -69,6 +72,7 @@ enum IMode {
         marks: Vec<String>,
         text: String,
     },
+    Prompts(Picker),
     DrawerResize,
 }
 
@@ -90,6 +94,8 @@ pub struct Env {
     pub settings: PathBuf,
     pub sock: PathBuf,
     pub editor: String,
+    pub prompts: PathBuf,
+    pub clipboard: fn() -> Option<String>,
     pub notify: crate::config::Notify,
 }
 
@@ -148,6 +154,9 @@ pub struct App<B: SessionBackend + UiBackend> {
     bar_h: u16,
     prev_active: Option<String>,
     pub update: Option<String>,
+    saved: Vec<crate::prompts::Prompt>,
+    clip: Option<String>,
+    last_prompt: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -239,6 +248,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             bar_h: 1,
             prev_active: None,
             update: None,
+            saved: Vec::new(),
+            clip: None,
+            last_prompt: HashMap::new(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -400,6 +412,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.start_search();
                 Ok(String::new())
             }
+            ["prompts"] => self.start_prompts().map(|_| String::new()),
             ["mark"] => {
                 self.cancel_mode();
                 if self.collapsed {
@@ -575,6 +588,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             "UserPromptSubmit" => {
                 self.tool.insert(sid.into(), "thinking".into());
+                if let Some(p) = payload.get("prompt").and_then(|p| p.as_str()) {
+                    if !p.trim().is_empty() {
+                        self.last_prompt.insert(sid.into(), p.trim().to_string());
+                    }
+                }
             }
             "PostToolUse" => {
                 self.tool.insert(sid.into(), "thinking".into());
@@ -627,6 +645,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             self.check_ui();
         }
         self.refresh_peek();
+        if matches!(self.mode, IMode::Prompts(_)) && self.ticks.is_multiple_of(2) {
+            self.refresh_prompts();
+        }
         self.refresh_shells();
         self.deliver_queued();
         self.notify();
@@ -1855,6 +1876,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 | IMode::Finish { .. }
                 | IMode::Search { .. }
                 | IMode::Broadcast { .. }
+                | IMode::Prompts(_)
         ) {
             self.mode = IMode::Normal;
             self.apply_layout();
@@ -2186,6 +2208,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 Ok(())
             }
+            Char('p') if marks.is_empty() => Err(anyhow!("mark sessions with space first")),
+            Char('p') => {
+                self.mode = IMode::Mark { marks };
+                return self.start_prompts();
+            }
             Enter if marks.is_empty() => Err(anyhow!("mark sessions with space first")),
             Enter => {
                 self.mode = IMode::Broadcast {
@@ -2212,23 +2239,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             KeyCode::Char('u') if k.ctrl => text.clear(),
             KeyCode::Enter if !text.trim().is_empty() => {
-                let (mut now_n, mut later) = (0, 0);
-                for sid in &marks {
-                    let Some(s) = self.st.session(sid).cloned() else {
-                        continue;
-                    };
-                    let Some(pane) = s.pane.clone() else { continue };
-                    if s.status == Status::Running {
-                        self.queued
-                            .entry(sid.clone())
-                            .or_default()
-                            .push(text.trim().to_string());
-                        later += 1;
-                    } else {
-                        self.be.send_text(&pane, text.trim(), true)?;
-                        now_n += 1;
-                    }
-                }
+                let (now_n, later) = self.deliver(&marks, text.trim())?;
                 self.cancel_mode();
                 self.set_focus(Focus::Sidebar);
                 self.flash(match later {
@@ -2241,6 +2252,27 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
         self.mode = IMode::Broadcast { marks, text };
         Ok(())
+    }
+
+    fn deliver(&mut self, sids: &[String], text: &str) -> Result<(usize, usize)> {
+        let (mut now_n, mut later) = (0, 0);
+        for sid in sids {
+            let Some(s) = self.st.session(sid).cloned() else {
+                continue;
+            };
+            let Some(pane) = s.pane.clone() else { continue };
+            if s.status == Status::Running {
+                self.queued
+                    .entry(sid.clone())
+                    .or_default()
+                    .push(text.to_string());
+                later += 1;
+            } else {
+                self.be.send_text(&pane, text, true)?;
+                now_n += 1;
+            }
+        }
+        Ok((now_n, later))
     }
 
     fn deliver_queued(&mut self) {
@@ -2813,6 +2845,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let IMode::Broadcast { marks, text } = self.mode.clone() {
             return self.broadcast_key(marks, text, k);
         }
+        if let IMode::Prompts(pk) = self.mode.clone() {
+            return self.prompts_key(pk, k);
+        }
         if k.ctrl {
             return Ok(());
         }
@@ -2837,7 +2872,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 Ok(())
             }
-            IMode::Broadcast { .. } => Ok(()),
+            IMode::Broadcast { .. } | IMode::Prompts(_) => Ok(()),
             IMode::Search {
                 query,
                 all,
@@ -3080,6 +3115,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             return Ok(());
         }
         match k.code {
+            Char('J') => self.move_project(1)?,
+            Char('K') => self.move_project(-1)?,
+            Down if k.shift => self.move_project(1)?,
+            Up if k.shift => self.move_project(-1)?,
             Char('j') | Down => self.move_cursor(1),
             Char('k') | Up => self.move_cursor(-1),
             Char('g') | Home => self.move_cursor(-10_000),
@@ -3193,6 +3232,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
+    fn move_project(&mut self, by: i32) -> Result<()> {
+        let pid = self
+            .current_project()
+            .ok_or_else(|| anyhow!("move to a project to reorder it"))?;
+        self.st.move_project(&pid, by);
+        Ok(())
+    }
+
     fn open_editor(&mut self) -> Result<()> {
         let dir = match &self.cursor {
             Some(CurRef::Session(sid)) => self.st.session(sid).map(|s| s.cwd.clone()),
@@ -3200,6 +3247,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
             None => None,
         }
         .ok_or_else(|| anyhow!("select a project first"))?;
+        self.launch_editor(&dir)?;
+        self.flash(format!("opened {} in {}", tilde(&dir), self.env.editor));
+        Ok(())
+    }
+
+    fn launch_editor(&self, target: &Path) -> Result<()> {
         let ed = &self.env.editor;
         let mut cmd = if crate::daemon::find_in_path(ed).is_some() {
             std::process::Command::new(ed)
@@ -3209,7 +3262,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             c
         };
         let mut child = cmd
-            .arg(&dir)
+            .arg(target)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -3220,7 +3273,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 crate::daemon::log("editor exited with an error");
             }
         });
-        self.flash(format!("opened {} in {ed}", tilde(&dir)));
         Ok(())
     }
 
@@ -3381,6 +3433,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 scope,
             } => Mode::Search(self.search_view(query, *all, *sel, scope)),
             IMode::Mark { marks } => Mode::Mark { count: marks.len() },
+            IMode::Prompts(pk) => Mode::Prompts(self.prompts_view(pk)),
             IMode::Broadcast { marks, text } => {
                 let targets: Vec<crate::view::Target> = marks
                     .iter()
@@ -3863,6 +3916,8 @@ mod tests {
             settings: "/s.json".into(),
             sock: "/x.sock".into(),
             editor: "true".into(),
+            prompts: std::env::temp_dir().join(format!("pebl-test-prompts-{}", std::process::id())),
+            clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
                 phone_after: 0,
@@ -4153,6 +4208,121 @@ mod tests {
             log.contains(&format!("send {} \"update the readme\"", panes[0])),
             "{log}"
         );
+    }
+
+    fn ctrl(a: &mut App<Fake>, c: char) {
+        let mut k = Key::plain(KeyCode::Char(c));
+        k.ctrl = true;
+        a.handle_input(Role::Bar, Input::Key(k));
+    }
+
+    fn with_prompts(a: &mut App<Fake>) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        a.env.prompts = dir.path().join("prompts");
+        dir
+    }
+
+    #[test]
+    fn saved_prompt_fills_the_clipboard_and_sends() {
+        let (mut a, d) = app();
+        let _p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let pane = a.st.sessions[0].pane.clone().unwrap();
+        a.handle_ctl(&["prompts".into()]);
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker not open")
+        };
+        assert_eq!(pv.rows[0].name, "investigate ticket");
+        assert!(
+            matches!(pv.clip, crate::view::Clip::Text { ref first, lines: 2 } if first.starts_with("BUG-12"))
+        );
+        assert_eq!(a.view().focus, Focus::Bar);
+        typ_role(&mut a, Role::Bar, "invest");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("send {pane} \"Investigate this ticket"))
+                && log.contains("BUG-12: login loops after reset\\nsteps: …\" true"),
+            "{log}"
+        );
+        assert!(matches!(a.view().mode, Mode::Normal));
+        assert_eq!(a.view().focus, Focus::Main);
+
+        a.handle_ctl(&["prompts".into()]);
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("send {pane} \"Investigate")) && log.contains("steps: …\" false"),
+            "{log}"
+        );
+    }
+
+    #[test]
+    fn saves_adds_and_deletes_prompts() {
+        let (mut a, d) = app();
+        let p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_ctl(&["prompts".into()]);
+        ctrl(&mut a, 's');
+        assert!(a.view().flash.unwrap().contains("send a prompt"));
+        key(&mut a, Role::Bar, KeyCode::Esc);
+        a.handle_hook(
+            &sid,
+            "UserPromptSubmit",
+            &serde_json::json!({"prompt": "Review this diff for edge cases"}),
+        );
+        a.handle_ctl(&["prompts".into()]);
+        ctrl(&mut a, 's');
+        typ_role(&mut a, Role::Bar, "edge cases");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let saved = std::fs::read_to_string(p.path().join("prompts/edge-cases.md")).unwrap();
+        assert_eq!(saved, "Review this diff for edge cases");
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker closed")
+        };
+        assert_eq!(pv.rows[pv.sel].name, "edge cases");
+        ctrl(&mut a, 'a');
+        typ_role(&mut a, Role::Bar, "write tests");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert!(p.path().join("prompts/write-tests.md").exists());
+        ctrl(&mut a, 'd');
+        key(&mut a, Role::Bar, KeyCode::Char('y'));
+        assert!(!p.path().join("prompts/write-tests.md").exists());
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker closed")
+        };
+        assert_eq!(pv.total, 2);
+    }
+
+    #[test]
+    fn saved_prompt_goes_to_every_marked_session() {
+        let (mut a, d) = app();
+        let _p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        a.handle_ctl(&["mark".into()]);
+        key(&mut a, Role::Sidebar, KeyCode::Char('a'));
+        key(&mut a, Role::Sidebar, KeyCode::Char('p'));
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker not open")
+        };
+        assert_eq!(pv.target, "2 sessions");
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        assert!(a.view().flash.unwrap().contains("one session"));
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let sends =
+            a.be.log
+                .borrow()
+                .iter()
+                .filter(|l| l.starts_with("send "))
+                .count();
+        assert_eq!(sends, 2);
+        assert_eq!(a.view().focus, Focus::Sidebar);
     }
 
     #[test]

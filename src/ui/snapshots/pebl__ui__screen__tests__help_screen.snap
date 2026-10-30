@@ -1,5 +1,6 @@
 ---
 source: src/ui/screen.rs
+assertion_line: 333
 expression: "snap(&v, 120, 40, Main::Stage)"
 ---
  projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
@@ -9,12 +10,12 @@ expression: "snap(&v, 120, 40, Main::Stage)"
    ◆ migrate-staging    input │ anywhere, even inside Claude
    ○ docs-pass             1h │   ctrl+j / ctrl+k  next / previous session
                               │   ctrl+g           jump to whatever needs you
- ▾ billing-svc              3 │   ctrl+n           new session in this project
-   ● onboarding-flow      14s │   ctrl+o           new project
-   ✕ e2e-tests         exit 1 │   ctrl+b           hide / show the sidebar
-   ○ a11y-audit            3h │   ctrl+space       sidebar ↔ Claude
-                              │   ctrl+f           search past conversations
- ▸ infra                    3 │   ctrl+x           mark sessions, send one prompt
+ ▾ billing-svc              3 │   ctrl+n · ctrl+o  new session · new project
+   ● onboarding-flow      14s │   ctrl+b           hide / show the sidebar
+   ✕ e2e-tests         exit 1 │   ctrl+space       sidebar ↔ Claude
+   ○ a11y-audit            3h │   ctrl+f           search past conversations
+                              │   ctrl+x           mark sessions, send one prompt
+ ▸ infra                    3 │   ctrl+p           saved prompts
                               │   ctrl+q           quit (sessions keep running)
                               │ columns
                               │   ctrl+\           open a session in a new column
@@ -28,7 +29,7 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   alt+c            send shell output to Claude
                               │ in the sidebar
                               │   j / k · enter    move · open or resume
-                              │   space            fold a project
+                              │   space · J / K    fold · move a project
                               │   p                peek at a session and answer it
                               │   d                review its changes
                               │   f                finish a worktree

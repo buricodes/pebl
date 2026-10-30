@@ -88,8 +88,9 @@ The first time, press **enter** to add the current folder and start a session. p
 | `alt+c` | paste the end of the shell's output into Claude's input |
 | `ctrl+f` | search every past Claude Code conversation, and resume one |
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
+| `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `p` peeks, `d` reviews, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 
@@ -108,6 +109,14 @@ When Claude's last reply contains a shell code block, the status bar offers `alt
 ### Send one prompt to several sessions
 
 `ctrl+x` puts the sidebar in mark mode: `space` marks a session, `a` marks every session in its project, and marks can span projects. Sessions waiting for you can't be marked until you answer them. `enter` opens a strip listing the targets; type the prompt and press `enter`. Idle sessions get it now; running ones get it when their current turn ends.
+
+### Saved prompts
+
+`ctrl+p` lists your saved prompts above the status bar. Type to filter, `↑/↓` to choose, `enter` to send it to the session you're in, or `tab` to type it into Claude's input so you can edit it first. Running sessions get it when their turn ends. In mark mode (`ctrl+x`), `p` sends a saved prompt to every marked session.
+
+Put `{{clipboard}}` in a prompt where pasted text should go. Copy a ticket, press `ctrl+p`, pick "investigate ticket" (pebl adds that one for you) and press `enter`: the ticket lands where `{{clipboard}}` was. The strip shows the clipboard's first line so you know what will be sent.
+
+`ctrl+a` adds a prompt and opens it in your editor, `ctrl+s` saves the last prompt you sent in this session, `ctrl+e` edits the selected one, `ctrl+d` deletes it. Prompts are plain Markdown files in `~/.pebl/prompts/`, one per prompt, named after the file.
 
 ### Worktrees
 
@@ -202,6 +211,7 @@ close_column = "C-w"  # only while columns are open
 search = "C-f"
 mark = "C-x"
 shell = "C-t"         # Claude Code uses ctrl+t to show its task list; rebind if you rely on it
+prompts = "C-p"       # saved prompts; inside Claude ctrl+p is otherwise "previous line"
 ```
 
 The defaults follow the design and override some Claude Code shortcuts while pebl is open: `ctrl+b` (background a bash command), `ctrl+o` (transcript), `ctrl+g` (open the prompt in your editor), and `ctrl+j` (newline). While columns are open, `ctrl+w` closes a column instead of deleting a word. Rebind any of these if you rely on them. On macOS, `ctrl+space` may also be the input-source switch.

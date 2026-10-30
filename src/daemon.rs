@@ -37,6 +37,8 @@ pub fn run() -> Result<()> {
         pebl: pebl.clone(),
         claude: find_in_path("claude").unwrap_or_else(|| "claude".into()),
         settings: paths::claude_settings(),
+        prompts: paths::prompts(),
+        clipboard: crate::prompts::clipboard,
         sock: sock.clone(),
         editor: crate::config::load(&paths::config())
             .ok()

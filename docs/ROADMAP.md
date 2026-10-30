@@ -19,7 +19,7 @@
 - [x] `^g` jump to next waiting session
 - [x] Collapsible sidebar, auto-collapse under 100 cols
 - [x] Rename, filter
-- [ ] Reorder projects
+- [x] Reorder projects (`J` / `K`)
 - [x] Worktree sessions (`w`)
 - [x] Desktop notification / bell when a background session starts waiting
 - [x] `config.toml` keybinding overrides
@@ -46,7 +46,7 @@
 - [x] Search past conversations and resume them
 - [x] Send one prompt to several sessions
 - [x] Shell drawer per session, run Claude's suggested commands, send output back
-- [ ] Saved prompts
+- [x] Saved prompts with `{{clipboard}}` (ctrl+p)
 
 ## Later
 - [ ] Agent adapters (Codex, OpenCode)
