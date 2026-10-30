@@ -120,6 +120,15 @@ pub struct SessionRow {
     pub ctx: Option<u8>,
     #[serde(default)]
     pub marked: Option<bool>,
+    #[serde(default)]
+    pub check: Option<CheckBadge>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckBadge {
+    Running,
+    Passed,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

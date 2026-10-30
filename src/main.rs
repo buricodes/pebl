@@ -1,5 +1,6 @@
 mod app;
 mod backend;
+mod checks;
 mod client;
 mod complete;
 mod config;
@@ -666,6 +667,7 @@ fn preview(width: u16, height: u16) -> Result<()> {
         col: None,
         ctx: None,
         marked: None,
+        check: None,
     };
     let projects = vec![
         ProjectRow {

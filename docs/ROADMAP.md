@@ -58,7 +58,8 @@
 - [x] P2 `ctrl+g` cycles through what needs you, "all clear" when nothing does
 - [x] P2 Inbox (`ctrl+y`): waiting, errored and finished sessions across projects
 - [x] P2 Terminal bell and OSC 9 notifications, chosen per event
-- [ ] P3 Auto-checks, budgets, shared project memory
+- [x] P3 Auto-checks after each turn (`[checks]` in pebl.toml, `t` / `T`, `auto_fix`)
+- [ ] P3 Budgets, shared project memory
 - [ ] P4 Task queue, best-of-N
 - [ ] P5 Reviewer agent, planner and workers, merge-conflict helper
 - [ ] P6 Triggers, recipes, replay and checkpoints

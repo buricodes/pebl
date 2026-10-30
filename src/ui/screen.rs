@@ -83,6 +83,7 @@ pub mod fixtures {
             col: None,
             ctx: None,
             marked: None,
+            check: None,
         }
     }
 
@@ -634,6 +635,28 @@ mod tests {
             waiting: 2,
             total: 4,
         }
+    }
+
+    fn with_checks() -> View {
+        let mut v = base();
+        v.projects[0].sessions[0].check = Some(CheckBadge::Passed);
+        v.projects[0].sessions[2].check = Some(CheckBadge::Failed);
+        v.projects[1].sessions[0].check = Some(CheckBadge::Running);
+        v
+    }
+
+    #[test]
+    fn check_badges() {
+        let t = transcript();
+        insta::assert_snapshot!(snap(&with_checks(), 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn check_badges_minimum() {
+        let t = transcript();
+        let mut v = with_checks();
+        v.layout = Layout::for_width(80, false);
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
     }
 
     #[test]
