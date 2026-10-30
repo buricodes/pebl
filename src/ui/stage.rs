@@ -164,7 +164,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "anywhere, even inside Claude",
         &[
             ("ctrl+j / ctrl+k", "next / previous session"),
-            ("ctrl+g", "jump to whatever needs you"),
+            ("ctrl+g · ctrl+y", "next thing that needs you · list"),
             ("ctrl+n · ctrl+o", "new session · new project"),
             ("ctrl+b", "hide / show the sidebar"),
             ("ctrl+space", "sidebar ↔ Claude"),

@@ -1,8 +1,8 @@
 use super::theme::Tok;
 use super::{keys, len, seg, seg_len, segb, Painter, Seg};
 use crate::view::{
-    Broadcast, Clip, Finish, Layout, Mode, NameFrom, NewProject, Peek, PromptStep, PromptsView,
-    SearchView, View,
+    Broadcast, Clip, Finish, InboxView, Layout, Mode, NameFrom, NewProject, NoticeKind, Peek,
+    PromptStep, PromptsView, SearchView, View,
 };
 
 fn shell_line(v: &View) -> bool {
@@ -20,6 +20,7 @@ pub fn height(v: &View) -> u16 {
         Mode::NewProject(np) => prompt_rows(np, 200).len() as u16 + 2,
         Mode::Peek(pk) => pk.lines.len() as u16 + 5,
         Mode::Broadcast(b) => broadcast_rows(b) as u16 + 2,
+        Mode::Inbox(iv) => inbox_rows(iv) as u16 + 3,
         Mode::Search(_) | Mode::Prompts(_) if v.layout.short_keys() => 10,
         Mode::Search(_) | Mode::Prompts(_) => 12,
         Mode::Finish(f) => finish_rows(f, v.flash.as_deref()).len() as u16 + 2,
@@ -51,6 +52,13 @@ pub fn render(v: &View, p: &mut Painter) {
     }
     if let Mode::Broadcast(b) = &v.mode {
         broadcast(b, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Inbox(iv) = &v.mode {
+        inbox(iv, p);
         if h >= 2 {
             let w = p.w();
             p.hl(0, h - 2, w);
@@ -302,6 +310,68 @@ fn snippet(text: &str, q: &str, w: usize, sel: bool) -> Vec<Seg> {
         post = super::fit(&post, room);
     }
     vec![seg(pre, base), segb(m, Tok::Acc), seg(post, base)]
+}
+
+fn inbox_rows(iv: &InboxView) -> usize {
+    iv.rows.len().max(1) + usize::from(iv.more > 0)
+}
+
+fn inbox(iv: &InboxView, p: &mut Painter) {
+    let w = p.w();
+    p.segs(1, 0, &[segb("Needs you", Tok::Fg)]);
+    let summary = match (iv.total, iv.waiting) {
+        (0, _) => String::new(),
+        (t, 0) => format!("{t} to look at"),
+        (t, wt) if t == wt => format!("{wt} waiting"),
+        (t, wt) => format!("{wt} waiting · {t} in all"),
+    };
+    p.rt(w - 1, 0, &summary, Tok::Dim, false);
+    if iv.rows.is_empty() {
+        p.t(3, 1, "All clear. Nothing needs you.", Tok::Mute, false);
+        return;
+    }
+    let (proj_w, sess_w) = if w >= 100 { (16, 26) } else { (12, 18) };
+    for (i, r) in iv.rows.iter().enumerate() {
+        let y = 1 + i as i32;
+        let sel = i == iv.sel;
+        if sel {
+            p.bg(0, y, w, Tok::Sel);
+            p.t(1, y, "›", Tok::Acc, true);
+        }
+        let (g, tok, bold) = match r.kind {
+            NoticeKind::Waiting => ("◆", Tok::Acc, true),
+            NoticeKind::Error => ("✕", Tok::Err, false),
+            _ => ("✓", Tok::Ok, false),
+        };
+        p.t(3, y, g, tok, bold);
+        p.t(
+            5,
+            y,
+            &super::fit(&r.project, proj_w - 1),
+            if sel { Tok::Fg } else { Tok::Mute },
+            false,
+        );
+        let sx = 5 + proj_w as i32;
+        p.t(sx, y, &super::fit(&r.session, sess_w - 1), Tok::Fg, sel);
+        let dx = sx + sess_w as i32;
+        let room = (w - dx - len(&r.age) as i32 - 3).max(4) as usize;
+        let dtok = match r.kind {
+            NoticeKind::Waiting => Tok::Acc,
+            NoticeKind::Error => Tok::Err,
+            _ => Tok::Mute,
+        };
+        p.t(dx, y, &super::fit(&r.detail, room), dtok, false);
+        p.rt(w - 1, y, &r.age, Tok::Dim, false);
+    }
+    if iv.more > 0 {
+        p.t(
+            5,
+            1 + iv.rows.len() as i32,
+            &format!("+ {} more", iv.more),
+            Tok::Dim,
+            false,
+        );
+    }
 }
 
 fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
@@ -792,6 +862,15 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 ("ctrl+u", "clear"),
             ])
         }
+        Mode::Inbox(iv) if iv.rows.is_empty() => keys(&[("esc", "close")]),
+        Mode::Inbox(_) if short => keys(&[("enter", "open"), ("p", "peek"), ("esc", "close")]),
+        Mode::Inbox(_) => keys(&[
+            ("enter", "open"),
+            ("p", "peek and answer"),
+            ("x", "dismiss"),
+            ("j/k", "move"),
+            ("esc", "close"),
+        ]),
         Mode::Prompts(pv) => match &pv.step {
             PromptStep::Name { .. } => keys(&[("enter", "save"), ("esc", "back")]),
             PromptStep::ConfirmDelete => keys(&[("y", "delete"), ("esc", "keep")]),
@@ -951,6 +1030,11 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
     if waiting > 0 && !hidden && matches!(v.mode, Mode::Normal) {
         right.push(segb(format!("◆ {waiting} waiting"), Tok::Acc));
         right.push(seg(" ctrl+g", Tok::Fg));
+        if waiting > 1 {
+            right.push(seg(" · ", Tok::Dim));
+            right.push(seg("ctrl+y", Tok::Fg));
+            right.push(seg(" list", Tok::Mute));
+        }
         right.push(seg("   ", Tok::Fg));
     }
     if hidden && !v.limits.is_empty() {

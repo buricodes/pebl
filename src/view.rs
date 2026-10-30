@@ -15,6 +15,7 @@ pub struct View {
     pub stage: Stage,
     pub flash: Option<String>,
     pub bell: u64,
+    pub osc: Option<(u64, String)>,
     pub color: ColorMode,
     pub filter: String,
     #[serde(default)]
@@ -225,6 +226,7 @@ pub enum Mode {
     Finish(Finish),
     Search(SearchView),
     Prompts(PromptsView),
+    Inbox(InboxView),
     Mark {
         count: usize,
     },
@@ -259,6 +261,24 @@ pub struct SearchView {
     pub project: String,
     pub projects: usize,
     pub indexing: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InboxView {
+    pub rows: Vec<InboxRow>,
+    pub sel: usize,
+    pub more: usize,
+    pub waiting: usize,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InboxRow {
+    pub kind: NoticeKind,
+    pub project: String,
+    pub session: String,
+    pub detail: String,
+    pub age: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

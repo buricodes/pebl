@@ -1,3 +1,4 @@
+mod attention;
 mod saved_prompts;
 
 use crate::backend::{Arrangement, SessionBackend, SpawnSpec, UiBackend, UiPanes};
@@ -73,6 +74,9 @@ enum IMode {
         text: String,
     },
     Prompts(Picker),
+    Inbox {
+        sel: usize,
+    },
     DrawerResize,
 }
 
@@ -117,6 +121,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     history: Vec<(PathBuf, usize)>,
     flash: Option<(String, Instant)>,
     bell: u64,
+    osc: Option<(u64, String)>,
     pub color: ColorMode,
     dead: HashSet<String>,
     stale: HashMap<String, (Status, u8)>,
@@ -174,7 +179,7 @@ struct Pending {
     at: u64,
     desktop: bool,
     phone: bool,
-    chimed: bool,
+    rung: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -211,6 +216,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             history: Vec::new(),
             flash: None,
             bell: 0,
+            osc: None,
             color: ColorMode::Truecolor,
             dead: HashSet::new(),
             stale: HashMap::new(),
@@ -413,6 +419,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Ok(String::new())
             }
             ["prompts"] => self.start_prompts().map(|_| String::new()),
+            ["inbox"] => {
+                self.start_inbox();
+                Ok(String::new())
+            }
             ["mark"] => {
                 self.cancel_mode();
                 if self.collapsed {
@@ -605,9 +615,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let Some(new) = status::from_hook(event, payload, cur) {
             if self.st.set_status(sid, new) {
                 self.stale.remove(sid);
-                if new == Status::Waiting && !self.watching(sid) && !self.muted {
-                    self.bell += 1;
-                }
             }
         }
         if event == "SessionEnd" {
@@ -1076,7 +1083,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 at: t,
                 desktop: false,
                 phone: false,
-                chimed: false,
+                rung: false,
             };
             match (prev, s.status) {
                 (Some(_), Status::Waiting) if !watched => {
@@ -1109,12 +1116,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     fn notify(&mut self) {
         let cfg = self.env.notify.clone();
-        if self.muted || (!cfg.desktop && !cfg.chime && cfg.phone.is_empty()) {
+        if self.muted || !cfg.anything() {
             self.pending.clear();
             return;
         }
         let t = now();
         let mut out = Vec::new();
+        let (mut rings, mut osc) = (0, None);
         let watched: HashSet<String> = self
             .st
             .sessions
@@ -1148,16 +1156,23 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 _ => format!("{} finished", s.name),
             };
             let title = format!("pebl · {project}");
-            let sound = cfg.sound_for(p.kind);
-            if let (Some(sound), false) = (&sound, p.chimed) {
-                p.chimed = true;
-                out.push(Outgoing {
-                    title: sound.clone(),
-                    body: String::new(),
-                    channel: Channel::Chime,
-                });
+            if !p.rung {
+                p.rung = true;
+                if let Some(sound) = cfg.sound_for(p.kind) {
+                    out.push(Outgoing {
+                        title: sound,
+                        body: String::new(),
+                        channel: Channel::Chime,
+                    });
+                }
+                if cfg.bell.on(p.kind) {
+                    rings += 1;
+                }
+                if cfg.osc.on(p.kind) {
+                    osc = Some(format!("{title}: {body}"));
+                }
             }
-            if cfg.desktop && !p.desktop {
+            if cfg.desktop.on(p.kind) && !p.desktop {
                 p.desktop = true;
                 out.push(Outgoing {
                     title: title.clone(),
@@ -1177,9 +1192,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 });
             }
             let phone_left = !cfg.phone.is_empty() && p.kind != NoticeKind::Done && !p.phone;
-            (cfg.desktop && !p.desktop) || phone_left
+            (cfg.desktop.on(p.kind) && !p.desktop) || phone_left
         });
         self.outbox.extend(out);
+        self.bell += rings;
+        if let Some(text) = osc {
+            let n = self.osc.as_ref().map_or(1, |(n, _)| n + 1);
+            self.osc = Some((n, text));
+        }
     }
 
     fn notice(&self, counts: &Counts) -> Notice {
@@ -1197,14 +1217,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .collect();
         waiting.sort_by_key(|s| s.since);
         if let Some(s) = waiting.first() {
-            let detail = match self.tool.get(&s.id).map(String::as_str) {
-                Some("thinking") | None => "waiting for input".to_string(),
-                Some(t) => format!("wants to run {t}"),
-            };
             return Notice {
                 kind: NoticeKind::Waiting,
                 session: s.name.clone(),
-                detail,
+                detail: self.waiting_detail(&s.id),
                 count: waiting.len(),
                 more: waiting.len() - 1,
             };
@@ -1217,16 +1233,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 .map(|(sid, (_, at))| (sid.clone(), *at))
         };
         if let Some((sid, _)) = newest(NoticeKind::Error) {
-            let detail = self
-                .st
-                .session(&sid)
-                .and_then(|s| s.exit_code)
-                .map(|c| format!("exit {c}"))
-                .unwrap_or_else(|| "stopped with an error".into());
             return Notice {
                 kind: NoticeKind::Error,
                 session: name(&sid),
-                detail,
+                detail: self.error_detail(&sid),
                 count: 1,
                 more: 0,
             };
@@ -1760,35 +1770,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
-    fn jump_waiting(&mut self) -> Result<()> {
-        let alert = |k: NoticeKind| {
-            self.alerts
-                .iter()
-                .filter(|(_, (kk, _))| *kk == k)
-                .max_by_key(|(_, (_, at))| *at)
-                .map(|(sid, _)| sid.clone())
-        };
-        let oldest = self
-            .st
-            .sessions
-            .iter()
-            .filter(|s| s.status == Status::Waiting)
-            .min_by_key(|s| s.since)
-            .map(|s| s.id.clone())
-            .or_else(|| alert(NoticeKind::Error))
-            .or_else(|| alert(NoticeKind::Done));
-        match oldest {
-            Some(sid) => {
-                self.cancel_mode();
-                self.activate(&sid);
-                self.sync_main();
-                self.set_focus(Focus::Main);
-            }
-            None => self.flash("nothing needs you"),
-        }
-        Ok(())
-    }
-
     fn visible(&self) -> Vec<(usize, Vec<usize>)> {
         let f = match &self.mode {
             IMode::Filter { text } => text.to_lowercase(),
@@ -1877,6 +1858,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 | IMode::Search { .. }
                 | IMode::Broadcast { .. }
                 | IMode::Prompts(_)
+                | IMode::Inbox { .. }
         ) {
             self.mode = IMode::Normal;
             self.apply_layout();
@@ -2873,6 +2855,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Ok(())
             }
             IMode::Broadcast { .. } | IMode::Prompts(_) => Ok(()),
+            IMode::Inbox { sel } => self.inbox_key(sel, k),
             IMode::Search {
                 query,
                 all,
@@ -3434,6 +3417,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             } => Mode::Search(self.search_view(query, *all, *sel, scope)),
             IMode::Mark { marks } => Mode::Mark { count: marks.len() },
             IMode::Prompts(pk) => Mode::Prompts(self.prompts_view(pk)),
+            IMode::Inbox { sel } => Mode::Inbox(self.inbox_view(*sel)),
             IMode::Broadcast { marks, text } => {
                 let targets: Vec<crate::view::Target> = marks
                     .iter()
@@ -3507,6 +3491,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             stage: self.stage_kind().unwrap_or(Stage::Empty),
             flash: self.flash.as_ref().map(|(m, _)| m.clone()),
             bell: self.bell,
+            osc: self.osc.clone(),
             color: self.color,
             filter: self.filter.clone(),
             mascot: if self.muted {
@@ -4005,7 +3990,12 @@ mod tests {
         a.st.session_mut(&ids[1]).unwrap().since = 100;
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         assert_eq!(a.view().counts.waiting, 2);
-        assert!(a.view().bell >= 1);
+        a.env.notify.bell = crate::config::Events::Only(vec!["waiting".into()]);
+        a.env.notify.osc = crate::config::Events::All(true);
+        a.tick();
+        let v = a.view();
+        assert!(v.bell >= 1);
+        assert!(v.osc.is_some_and(|(_, t)| t.ends_with("needs you")));
         a.handle_ctl(&["waiting".into()]);
         assert_eq!(a.view().active.unwrap().session, "b");
         a.handle_hook(&ids[1], "PostToolUse", &serde_json::Value::Null);
@@ -4463,12 +4453,87 @@ mod tests {
             (NoticeKind::Waiting, "wants to run Bash")
         );
         a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "a");
         a.handle_hook(&ids[1], "PostToolUse", &serde_json::Value::Null);
         a.handle_hook(&ids[1], "Stop", &serde_json::Value::Null);
-        assert_eq!(a.view().notice.kind, NoticeKind::Done);
+        a.tick();
+        let n = a.view().notice;
+        assert_eq!((n.kind, n.session.as_str()), (NoticeKind::Done, "b"));
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        assert_eq!(a.view().notice.kind, NoticeKind::Idle);
+    }
+
+    #[test]
+    fn ctrl_g_cycles_through_what_needs_you_then_says_all_clear() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b", "c"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        a.handle_hook(&ids[1], "PermissionRequest", &serde_json::Value::Null);
+        a.st.session_mut(&ids[1]).unwrap().since = 100;
+        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
+        a.st.session_mut(&ids[0]).unwrap().since = 200;
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
         a.handle_ctl(&["waiting".into()]);
         assert_eq!(a.view().active.unwrap().session, "a");
-        assert_eq!(a.view().notice.kind, NoticeKind::Idle);
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        for id in &ids[..2] {
+            a.handle_hook(id, "UserPromptSubmit", &serde_json::Value::Null);
+        }
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().flash.as_deref(), Some("all clear"));
+    }
+
+    #[test]
+    fn inbox_lists_opens_peeks_and_dismisses() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b", "c"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        a.tick();
+        let bash = serde_json::json!({"tool_name": "Bash"});
+        a.handle_hook(&ids[0], "PermissionRequest", &bash);
+        a.handle_hook(&ids[1], "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&ids[1], "Stop", &serde_json::Value::Null);
+        a.tick();
+        a.handle_ctl(&["inbox".into()]);
+        let Mode::Inbox(iv) = a.view().mode else {
+            panic!("inbox not open")
+        };
+        let rows: Vec<(NoticeKind, &str, &str)> = iv
+            .rows
+            .iter()
+            .map(|r| (r.kind, r.session.as_str(), r.detail.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (NoticeKind::Waiting, "a", "wants to run Bash"),
+                (NoticeKind::Done, "b", "finished"),
+            ]
+        );
+        assert_eq!((iv.waiting, iv.total), (1, 2));
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        assert!(a.view().flash.unwrap().contains("answer it"));
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        let Mode::Inbox(iv) = a.view().mode else {
+            panic!("inbox closed")
+        };
+        assert_eq!(iv.total, 1);
+        key(&mut a, Role::Bar, KeyCode::Char('p'));
+        assert!(matches!(a.view().mode, Mode::Peek(ref pk) if pk.session == "a"));
+        a.handle_ctl(&["inbox".into()]);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.view().active.unwrap().session, "a");
+        assert_eq!(a.view().focus, Focus::Main);
     }
 
     #[test]

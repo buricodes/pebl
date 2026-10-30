@@ -19,7 +19,9 @@ pub struct Config {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Notify {
-    pub desktop: bool,
+    pub desktop: Events,
+    pub bell: Events,
+    pub osc: Events,
     pub chime: bool,
     pub chime_waiting: String,
     pub chime_done: String,
@@ -31,7 +33,13 @@ pub struct Notify {
 impl Default for Notify {
     fn default() -> Self {
         Notify {
-            desktop: true,
+            desktop: Events::All(true),
+            bell: if cfg!(target_os = "macos") {
+                Events::All(false)
+            } else {
+                Events::Only(vec!["waiting".into()])
+            },
+            osc: Events::All(false),
             chime: true,
             chime_waiting: "Glass".into(),
             chime_done: "Pop".into(),
@@ -42,7 +50,45 @@ impl Default for Notify {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Events {
+    All(bool),
+    Only(Vec<String>),
+}
+
+impl Events {
+    pub fn on(&self, kind: crate::view::NoticeKind) -> bool {
+        use crate::view::NoticeKind::*;
+        let name = match kind {
+            Waiting => "waiting",
+            Error => "error",
+            Done => "done",
+            _ => return false,
+        };
+        match self {
+            Events::All(on) => *on,
+            Events::Only(list) => list.iter().any(|e| e.eq_ignore_ascii_case(name)),
+        }
+    }
+
+    pub fn any(&self) -> bool {
+        match self {
+            Events::All(on) => *on,
+            Events::Only(list) => !list.is_empty(),
+        }
+    }
+}
+
 impl Notify {
+    pub fn anything(&self) -> bool {
+        self.desktop.any()
+            || self.bell.any()
+            || self.osc.any()
+            || self.chime
+            || !self.phone.is_empty()
+    }
+
     pub fn sound_for(&self, kind: crate::view::NoticeKind) -> Option<String> {
         use crate::view::NoticeKind::*;
         if !self.chime {
@@ -93,6 +139,7 @@ pub struct Keys {
     pub mark: String,
     pub shell: String,
     pub prompts: String,
+    pub inbox: String,
 }
 
 impl Default for Keys {
@@ -112,6 +159,7 @@ impl Default for Keys {
             mark: "C-x".into(),
             shell: "C-t".into(),
             prompts: "C-p".into(),
+            inbox: "C-y".into(),
         }
     }
 }
@@ -132,6 +180,7 @@ impl Keys {
             (self.mark.as_str(), "mark"),
             (self.shell.as_str(), "shell"),
             (self.prompts.as_str(), "prompts"),
+            (self.inbox.as_str(), "inbox"),
         ]
         .into_iter()
         .filter(|(k, _)| !k.is_empty())
@@ -156,5 +205,17 @@ mod tests {
         let c: Config = toml::from_str("[keys]\nfocus = \"C-]\"\n").unwrap();
         assert_eq!(c.keys.focus, "C-]");
         assert_eq!(c.keys.next, "C-j");
+    }
+
+    #[test]
+    fn notify_events_take_a_switch_or_a_list() {
+        use crate::view::NoticeKind::*;
+        let c: Config =
+            toml::from_str("[notify]\ndesktop = false\nbell = [\"waiting\", \"Error\"]\n").unwrap();
+        assert!(!c.notify.desktop.on(Waiting));
+        assert!(c.notify.bell.on(Waiting) && c.notify.bell.on(Error) && !c.notify.bell.on(Done));
+        assert!(!c.notify.osc.any());
+        let d: Config = toml::from_str("[notify]\ndesktop = true\n").unwrap();
+        assert!(d.notify.desktop.on(Done));
     }
 }
