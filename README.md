@@ -91,7 +91,7 @@ The first time, press **enter** to add the current folder and start a session. p
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-The bottom bar shows the few keys that matter for what's selected right now (a waiting session offers `enter answer it`, one with failing checks offers `t`, a project offers `q task queue`), and `?` lists every key. With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `R` starts a reviewer agent, `P` queues the tasks from a session's plan, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+The bottom bar shows the few keys that matter for what's selected right now (a waiting session offers `enter answer it`, one with failing checks offers `t`, a project offers `q task queue`), and `?` lists every key. With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `R` starts a reviewer agent, `P` queues the tasks from a session's plan, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `H` opens the session's timeline, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 
@@ -204,6 +204,12 @@ A step is a prompt, or one of:
 | `open PR` | asks Claude to commit, push and open a pull request with `gh` |
 
 `{{clipboard}}` is replaced by what you copied; any other `{{name}}` is asked for when the recipe starts. Your recipes live in `~/.pebl/recipes/`; a repo can share some in `.pebl/recipes/`. From the command line: `pebl recipe ls`, `pebl recipe add <file or URL>`, `pebl recipe run "fix ticket" --var ticket=BUG-12`.
+
+### Timeline and rollback
+
+pebl keeps a timeline of every session: your prompts, the tools Claude used (which files it edited, which commands it ran), what each turn changed and how the checks went. At the end of each turn that changed files it also takes a snapshot of the folder, stored as a hidden git ref (`refs/pebl/…`), without touching your branch, commits or staging area.
+
+`H` on a session opens the timeline, so you can see what an agent did while you were away. `r` twice on a turn puts the files back to how they were after it; what's there now is snapshotted first, so a rollback can itself be rolled back. Only files are restored: Claude's chat still remembers the later turns (`/rewind` in Claude Code rewinds that). Snapshots and the timeline are deleted with the session.
 
 ### Project notes
 

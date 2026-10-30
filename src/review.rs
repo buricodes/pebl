@@ -3,13 +3,9 @@ use crate::ui::theme::{ColorMode, Tok};
 use crate::ui::{fit, keys, len, seg, segb, Painter, Seg};
 use crate::{ipc, paths};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
-use crossterm::{cursor, execute, terminal};
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
+use crossterm::event::{KeyCode, KeyModifiers};
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
@@ -448,49 +444,30 @@ pub fn run(sid: &str, cwd: &Path, title: &str, color: ColorMode) -> Result<()> {
             ),
         });
     }
-    terminal::enable_raw_mode()?;
-    execute!(
-        std::io::stdout(),
-        terminal::EnterAlternateScreen,
-        event::EnableMouseCapture,
-        cursor::Hide
-    )?;
-    let res = (|| -> Result<()> {
-        let mut term = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
-        loop {
-            let mut page = 10;
-            term.draw(|f| {
-                let area = f.area();
-                page = area.height.saturating_sub(5).max(1) as i64;
-                let mut p = Painter::new(f.buffer_mut(), area, color);
-                r.draw(&mut p);
-            })?;
-            if !event::poll(Duration::from_millis(500))? {
-                continue;
-            }
-            match event::read()? {
-                Event::Key(k) if k.kind != KeyEventKind::Release => {
-                    if r.key(k.code, k.modifiers, page, sid) {
-                        return Ok(());
-                    }
-                }
-                Event::Mouse(m) => match m.kind {
-                    MouseEventKind::ScrollDown => r.step(3),
-                    MouseEventKind::ScrollUp => r.step(-3),
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    })();
-    let _ = execute!(
-        std::io::stdout(),
-        cursor::Show,
-        event::DisableMouseCapture,
-        terminal::LeaveAlternateScreen
-    );
-    let _ = terminal::disable_raw_mode();
-    res
+    let mut screen = ReviewScreen {
+        review: r,
+        sid: sid.to_string(),
+    };
+    crate::popup::run(&mut screen, color)
+}
+
+struct ReviewScreen {
+    review: Review,
+    sid: String,
+}
+
+impl crate::popup::Screen for ReviewScreen {
+    fn draw(&mut self, p: &mut Painter) {
+        self.review.draw(p);
+    }
+
+    fn key(&mut self, code: KeyCode, mods: KeyModifiers, page: i64) -> bool {
+        self.review.key(code, mods, page, &self.sid)
+    }
+
+    fn scroll(&mut self, by: i64) {
+        self.review.step(by);
+    }
 }
 
 #[cfg(test)]

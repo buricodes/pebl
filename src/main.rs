@@ -15,6 +15,7 @@ mod memory;
 mod model;
 mod notify;
 mod paths;
+mod popup;
 mod project;
 mod prompts;
 mod queue;
@@ -24,6 +25,8 @@ mod search;
 mod status;
 mod store;
 mod telemetry;
+mod timeline;
+mod timeline_view;
 mod ui;
 mod update;
 mod view;
@@ -129,6 +132,15 @@ enum Cmd {
         sid: String,
         #[arg(long)]
         cwd: std::path::PathBuf,
+        #[arg(long, default_value = "")]
+        title: String,
+        #[arg(long, default_value = "truecolor")]
+        color: String,
+    },
+    #[command(hide = true)]
+    Timeline {
+        #[arg(long)]
+        sid: String,
         #[arg(long, default_value = "")]
         title: String,
         #[arg(long, default_value = "truecolor")]
@@ -431,6 +443,14 @@ fn run(cli: Cli) -> Result<()> {
                 ui::theme::ColorMode::Truecolor
             };
             review::run(&sid, &cwd, &title, mode)
+        }
+        Some(Cmd::Timeline { sid, title, color }) => {
+            let mode = if color == "256" {
+                ui::theme::ColorMode::Indexed
+            } else {
+                ui::theme::ColorMode::Truecolor
+            };
+            timeline_view::run(&sid, &title, mode)
         }
         Some(Cmd::Hook { .. }) => Ok(()),
         Some(Cmd::Statusline) => {

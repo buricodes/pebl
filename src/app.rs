@@ -3,6 +3,7 @@ mod auto_checks;
 mod hints;
 mod notes;
 mod recipe_runner;
+mod replay;
 mod reviewer;
 mod saved_prompts;
 mod task_queue;
@@ -136,6 +137,7 @@ pub struct Env {
     pub memory: PathBuf,
     pub reviews: PathBuf,
     pub recipes: PathBuf,
+    pub timeline: PathBuf,
     pub detect_checks: bool,
     pub clipboard: fn() -> Option<String>,
     pub notify: crate::config::Notify,
@@ -205,6 +207,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     checks_done: auto_checks::Finished,
     reviewers: HashMap<String, String>,
     sent: HashMap<String, Instant>,
+    snapshots: replay::Snapshots,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -305,6 +308,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             checks_done: Default::default(),
             reviewers: HashMap::new(),
             sent: HashMap::new(),
+            snapshots: Default::default(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -448,6 +452,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 })
             }
             ["review", sid] => self.review(sid).map(|_| String::new()),
+            ["restore", sid, to] => self.restore_checkpoint(sid, to),
             ["finish", sid] => self.start_finish(sid).map(|_| String::new()),
             ["shell"] => self.toggle_shell().map(|_| String::new()),
             ["run-next"] => self.run_next().map(|_| String::new()),
@@ -652,6 +657,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let Some(cur) = self.st.session(sid).map(|s| s.status) else {
             return;
         };
+        self.record_hook(sid, event, payload);
         match event {
             "PreToolUse" | "PermissionRequest" => {
                 if let Some(t) = payload.get("tool_name").and_then(|t| t.as_str()) {
@@ -725,6 +731,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
         self.refresh_shells();
         self.collect_checks();
+        self.collect_snapshots();
         self.run_queue();
         self.collect_reviews();
         self.deliver_queued();
@@ -1686,6 +1693,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     let _ = self.be.kill(&p);
                 }
                 self.drawer.remove(sid.as_str());
+                self.forget_timeline(sid, &s.cwd);
                 self.st.sessions.retain(|x| x.id != *sid);
                 let next = pos
                     .and_then(|i| {
@@ -3363,6 +3371,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.start_reviewer(&sid)?;
             }
             Char('q') => self.start_queue()?,
+            Char('H') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to a session to see its timeline"),
+                };
+                self.open_timeline(&sid)?;
+            }
             Char('P') => {
                 let sid = match &self.cursor {
                     Some(CurRef::Session(sid)) => sid.clone(),
@@ -4133,6 +4148,8 @@ mod tests {
             reviews: std::env::temp_dir().join(format!("pebl-test-reviews-{}", std::process::id())),
             detect_checks: true,
             recipes: std::env::temp_dir().join(format!("pebl-test-recipes-{}", std::process::id())),
+            timeline: std::env::temp_dir()
+                .join(format!("pebl-test-timeline-{}", std::process::id())),
             clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
@@ -4957,6 +4974,83 @@ mod tests {
     }
 
     #[test]
+    fn turns_are_recorded_snapshotted_and_restorable() {
+        use crate::timeline::Event;
+        let (mut a, d) = app();
+        git_repo(d.path());
+        let store = tempfile::tempdir().unwrap();
+        a.env.timeline = store.path().to_path_buf();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_hook(
+            &sid,
+            "UserPromptSubmit",
+            &serde_json::json!({"prompt": "add a readme"}),
+        );
+        a.handle_hook(
+            &sid,
+            "PreToolUse",
+            &serde_json::json!({"tool_name": "Write", "tool_input": {"file_path": "README.md"}}),
+        );
+        std::fs::write(d.path().join("README.md"), "hello\n").unwrap();
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        let started = Instant::now();
+        let first = loop {
+            a.tick();
+            let turn = crate::timeline::read(store.path(), &sid)
+                .into_iter()
+                .find_map(|e| match e {
+                    Event::Turn {
+                        checkpoint, files, ..
+                    } => Some((checkpoint, files)),
+                    _ => None,
+                });
+            if let Some(t) = turn {
+                break t;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "no turn recorded"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(first.1, vec!["README.md"]);
+        let events = crate::timeline::read(store.path(), &sid);
+        assert!(matches!(&events[0], Event::Prompt { text, .. } if text == "add a readme"));
+        assert!(
+            matches!(&events[1], Event::Tool { name, detail, .. } if name == "Write" && detail == "README.md")
+        );
+
+        std::fs::write(d.path().join("README.md"), "changed\n").unwrap();
+        std::fs::write(d.path().join("extra.txt"), "x").unwrap();
+        let out = a.handle_ctl(&["restore".into(), sid.clone(), first.0.unwrap()]);
+        assert!(out.starts_with("restored"), "{out}");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("README.md")).unwrap(),
+            "hello\n"
+        );
+        assert!(!d.path().join("extra.txt").exists());
+        assert!(matches!(
+            crate::timeline::read(store.path(), &sid).last(),
+            Some(Event::Restore { .. })
+        ));
+
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(sid.clone()));
+        key(&mut a, Role::Sidebar, KeyCode::Char('H'));
+        assert!(a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.starts_with("popup") && l.contains("timeline --sid")));
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        let busy = a.handle_ctl(&["restore".into(), sid.clone(), "HEAD".into()]);
+        assert!(busy.contains("is busy"), "{busy}");
+    }
+
+    #[test]
     fn best_of_n_compares_attempts_and_keeps_the_winner() {
         use crate::model::TaskState::*;
         let (mut a, d) = app();
@@ -5038,7 +5132,7 @@ mod tests {
         };
         a.set_focus(Focus::Sidebar);
         a.cursor = Some(CurRef::Session(ids[0].clone()));
-        assert_eq!(keys_of(&a), vec!["d", "R", "c", "?"]);
+        assert_eq!(keys_of(&a), vec!["d", "R", "H", "c", "?"]);
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         assert_eq!(a.view().hints[0], ("enter".into(), "answer it".into()));
         assert_eq!(keys_of(&a).len(), 6);

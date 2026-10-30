@@ -64,6 +64,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if !self.borrows_folder(sid) {
             h.add("d", "review changes");
             h.add("R", "ask a reviewer");
+            h.add("H", "timeline");
         }
         h.add("c", "open in a column");
         h.done()

@@ -67,5 +67,5 @@
 - [x] P5 Planner: `P` queues the tasks from a session's checklist
 - [x] P5 Merge-conflict helper in the finish flow
 - [x] P6 Recipes: multi-step workflows in ctrl+p and `pebl recipe`, with checks and review steps
-- [ ] P6 Replay and checkpoints
+- [x] P6 Timeline (`H`) and per-turn checkpoints with rollback
 - [ ] P6 Triggers (CI, issues, schedule)

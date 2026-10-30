@@ -104,6 +104,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
             Err(_) => return,
         };
         for (sid, report) in reports {
+            if let Report::Ran(outcomes, _) = &report {
+                self.record(
+                    &sid,
+                    crate::timeline::Event::Checks {
+                        at: crate::model::now(),
+                        passed: outcomes.iter().all(Outcome::passed),
+                        summary: checks::summary(outcomes),
+                    },
+                );
+            }
             let auto_fix = self.checks_for(&sid).auto_fix;
             let name = self
                 .st

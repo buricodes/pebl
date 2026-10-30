@@ -203,7 +203,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("c · w", "open in a new column · worktree session"),
             ("t · T", "send failing checks to Claude · run checks"),
             ("r · x", "rename · kill"),
-            ("e", "open the folder in your editor"),
+            ("e · H", "open in your editor · timeline, roll back"),
             ("q · /", "task queue · filter"),
             ("N · m", "add a project note · mute alerts"),
         ],
