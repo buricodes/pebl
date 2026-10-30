@@ -91,7 +91,7 @@ The first time, press **enter** to add the current folder and start a session. p
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 
@@ -114,6 +114,20 @@ When Claude's last reply contains a shell code block, the status bar offers `alt
 ### Inbox
 
 `ctrl+y` lists every session that needs you, across all projects: waiting ones first (longest waiting at the top, with what they want, like `wants to run Bash`), then ones that stopped with an error, then ones that finished while you weren't looking. `enter` opens one, `p` peeks and answers it without switching, `x` dismisses an error or finished one, `esc` closes. Finished sessions drop off on their own once you've looked at them, or after 15 minutes. With two or more waiting, the status bar shows `ctrl+y list`.
+
+### Checks after every turn
+
+Add a `[checks]` table to the project's `pebl.toml` and pebl runs those commands in the background each time a session finishes a turn, in that session's folder (its worktree, if it has one):
+
+```toml
+[checks]
+test = "npm test"
+lint = "npm run lint"
+typecheck = "npx tsc --noEmit"
+auto_fix = 0      # send failures back to Claude on their own, up to this many times per task
+```
+
+The sidebar shows `…` while they run, then `✓` or `✕` next to the session. Runs are skipped when no files changed since the last one, so turns that only answer questions cost nothing. When a check fails, `t` sends Claude the failing commands with the end of their output and asks it to fix them; `T` runs the checks again now. With `auto_fix = 2`, pebl sends failures back by itself up to twice, and the count resets when you send the next prompt yourself. Each command has 10 minutes.
 
 ### Saved prompts
 

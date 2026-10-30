@@ -1,0 +1,45 @@
+---
+source: src/ui/screen.rs
+assertion_line: 651
+expression: "snap(&with_checks(), 120, 40, Main::Lines(&t))"
+---
+ projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
+                              │
+ ▾ nova-api               ◆ 1 │
+ › ● auth-refactor    ✓    2m │
+   ◆ migrate-staging    input │
+   ○ docs-pass        ✕    1h │
+                              │
+ ▾ billing-svc              3 │
+   ● onboarding-flow  …   14s │
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │
+                              │
+ ▸ infra                    3 │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │ > refactor the auth middleware to use the new session store
+                              │
+                              │ ● Update(src/middleware/auth.ts)
+                              │   ⎿  Updated src/middleware/auth.ts with 3 additions
+                              │
+                              │ ✻ Refactoring… (47s · esc to interrupt)
+                              │
+                              │ ╭────────────────────────────────────────────────────────────────────────────────
+ + new session         ctrl+n │ │ >
+ + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ ctrl+n new session · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 1 waiting ctrl+g   …i · 4 active

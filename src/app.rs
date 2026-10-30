@@ -1,4 +1,5 @@
 mod attention;
+mod auto_checks;
 mod saved_prompts;
 
 use crate::backend::{Arrangement, SessionBackend, SpawnSpec, UiBackend, UiPanes};
@@ -162,6 +163,8 @@ pub struct App<B: SessionBackend + UiBackend> {
     saved: Vec<crate::prompts::Prompt>,
     clip: Option<String>,
     last_prompt: HashMap<String, String>,
+    checks: HashMap<String, auto_checks::CheckState>,
+    checks_done: auto_checks::Finished,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -257,6 +260,8 @@ impl<B: SessionBackend + UiBackend> App<B> {
             saved: Vec::new(),
             clip: None,
             last_prompt: HashMap::new(),
+            checks: HashMap::new(),
+            checks_done: Default::default(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -603,11 +608,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
                         self.last_prompt.insert(sid.into(), p.trim().to_string());
                     }
                 }
+                self.prompt_submitted(sid);
             }
             "PostToolUse" => {
                 self.tool.insert(sid.into(), "thinking".into());
             }
-            "Stop" | "StopFailure" | "SessionEnd" => {
+            "Stop" => {
+                self.tool.remove(sid);
+                self.turn_ended(sid);
+            }
+            "StopFailure" | "SessionEnd" => {
                 self.tool.remove(sid);
             }
             _ => {}
@@ -656,6 +666,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             self.refresh_prompts();
         }
         self.refresh_shells();
+        self.collect_checks();
         self.deliver_queued();
         self.notify();
         if self.ticks.is_multiple_of(3) {
@@ -3177,6 +3188,17 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 };
                 self.review(&sid)?;
             }
+            Char('t') | Char('T') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to a session first"),
+                };
+                if k.code == Char('t') {
+                    self.send_failures(&sid)?;
+                } else {
+                    self.run_checks_now(&sid)?;
+                }
+            }
             Char('p') => {
                 let hidden_waiting = self
                     .st
@@ -3358,6 +3380,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                         }
                         _ => None,
                     },
+                    check: self.check_badge(&s.id),
                 });
             }
             projects.push(ProjectRow {
@@ -4312,6 +4335,77 @@ mod tests {
             std::fs::read_to_string(p.path().join("prompts/check-the-structure-of.md")).unwrap();
         assert_eq!(saved, body);
         assert!(!a.be.log.borrow().iter().any(|l| l.starts_with("send ")));
+    }
+
+    fn wait_for_badge(a: &mut App<Fake>, want: crate::view::CheckBadge) {
+        let started = Instant::now();
+        loop {
+            a.tick();
+            let badge = a.view().projects[0].sessions[0].check;
+            if badge == Some(want) {
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "badge stuck at {badge:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn checks_run_after_a_turn_and_failures_go_back_to_claude() {
+        use crate::view::CheckBadge;
+        let (mut a, d) = app();
+        std::fs::write(
+            d.path().join("pebl.toml"),
+            "[checks]\ntest = \"echo 2 tests failing; exit 1\"\nauto_fix = 1\n",
+        )
+        .unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        let pane = a.st.sessions[0].pane.clone().unwrap();
+        let sends = |a: &App<Fake>| {
+            a.be.log
+                .borrow()
+                .iter()
+                .filter(|l| l.starts_with(&format!("send {pane} \"The project's checks failed")))
+                .count()
+        };
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        wait_for_badge(&mut a, CheckBadge::Failed);
+        assert_eq!(sends(&a), 1);
+        assert!(a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.contains("2 tests failing")));
+
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        assert_eq!(
+            a.view().projects[0].sessions[0].check,
+            Some(CheckBadge::Running)
+        );
+        wait_for_badge(&mut a, CheckBadge::Failed);
+        assert_eq!(sends(&a), 1);
+        assert!(a.view().flash.unwrap().contains("t sends it"));
+
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('t'));
+        assert_eq!(sends(&a), 2);
+
+        std::fs::write(d.path().join("pebl.toml"), "[checks]\ntest = \"true\"\n").unwrap();
+        wait_for_badge(&mut a, CheckBadge::Failed);
+        key(&mut a, Role::Sidebar, KeyCode::Char('T'));
+        wait_for_badge(&mut a, CheckBadge::Passed);
+        key(&mut a, Role::Sidebar, KeyCode::Char('t'));
+        assert!(a.view().flash.unwrap().contains("no failing checks"));
     }
 
     #[test]

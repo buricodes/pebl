@@ -1,6 +1,6 @@
 use super::theme::Tok;
 use super::{fit, glyph, len, mascot, Painter};
-use crate::view::{Cursor, Layout, Mode, View};
+use crate::view::{CheckBadge, Cursor, Layout, Mode, View};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Pet {
@@ -241,6 +241,18 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
                     (len(&s.meta) + 1).max(6) as i32
                 };
                 let mw = mw + if g { 2 } else { 0 };
+                let mw = match s.check {
+                    Some(c) => {
+                        let (glyph, tok) = match c {
+                            CheckBadge::Running => ("…", Tok::Dim),
+                            CheckBadge::Passed => ("✓", Tok::Ok),
+                            CheckBadge::Failed => ("✕", Tok::Err),
+                        };
+                        p.t(w - 1 - mw - 1, y, glyph, tok, c == CheckBadge::Failed);
+                        mw + 2
+                    }
+                    None => mw,
+                };
                 if let Some(c) = s.ctx {
                     let gx = match (compact, s.col.is_some()) {
                         (true, true) => w - 6,

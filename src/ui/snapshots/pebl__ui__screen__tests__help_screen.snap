@@ -1,6 +1,6 @@
 ---
 source: src/ui/screen.rs
-assertion_line: 333
+assertion_line: 334
 expression: "snap(&v, 120, 40, Main::Stage)"
 ---
  projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
@@ -33,8 +33,8 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   p                peek at a session and answer it
                               │   d                review its changes
                               │   f                finish a worktree
-                              │   c                open it in a new column
-                              │   w                new worktree session
+                              │   c · w            open in a new column · worktree session
+                              │   t · T            send failing checks to Claude · run checks
                               │   r · x            rename · kill
                               │   e                open the folder in your editor
                               │   /                filter
