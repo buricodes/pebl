@@ -62,16 +62,24 @@ fn run_loop(role: Role) -> Result<()> {
 
     let mut view: Option<View> = None;
     let mut bell = None;
+    let mut osc: Option<Option<u64>> = None;
     let mut redraw = true;
     let started = std::time::Instant::now();
     let mut last_frame = u64::MAX;
     loop {
         while let Ok(v) = rx.try_recv() {
             if let (Some(v), Role::Sidebar) = (&v, role) {
-                if !cfg!(target_os = "macos") && bell.is_some_and(|b| v.bell > b) {
+                if bell.is_some_and(|b| v.bell > b) {
                     let _ = std::io::stdout().write_all(b"\x07");
                 }
                 bell = Some(v.bell);
+                let seq = v.osc.as_ref().map(|(n, _)| *n);
+                if let (Some(prev), Some((n, text))) = (osc, &v.osc) {
+                    if prev != Some(*n) {
+                        let _ = std::io::stdout().write_all(osc_notification(text).as_bytes());
+                    }
+                }
+                osc = Some(seq);
             }
             view = v;
             redraw = true;
@@ -150,4 +158,9 @@ fn run_loop(role: Role) -> Result<()> {
             }
         }
     }
+}
+
+fn osc_notification(text: &str) -> String {
+    let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+    format!("\x1bPtmux;\x1b\x1b]9;{clean}\x07\x1b\\")
 }

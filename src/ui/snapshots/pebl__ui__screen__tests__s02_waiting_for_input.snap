@@ -1,5 +1,6 @@
 ---
 source: src/ui/screen.rs
+assertion_line: 251
 expression: "snap(&v, 120, 40, Main::Lines(&[]))"
 ---
  projects                   3 │ nova-api / migrate-staging                                    ◆ waiting for input · 3m
@@ -41,4 +42,4 @@ expression: "snap(&v, 120, 40, Main::Lines(&[]))"
  + new session         ctrl+n │
  + new project         ctrl+o │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- ctrl+n new session · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 2 waiting ctrl+g   …i · 5 active
+ ctrl+n new session · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar    ◆ 2 waiting ctrl+g · ctrl+y list    · 5 active

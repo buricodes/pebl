@@ -596,6 +596,65 @@ mod tests {
         }
     }
 
+    fn inbox_view() -> InboxView {
+        let row = |kind, project: &str, session: &str, detail: &str, age: &str| InboxRow {
+            kind,
+            project: project.into(),
+            session: session.into(),
+            detail: detail.into(),
+            age: age.into(),
+        };
+        InboxView {
+            rows: vec![
+                row(
+                    NoticeKind::Waiting,
+                    "nova-api",
+                    "migrate-staging",
+                    "wants to run Bash",
+                    "4m",
+                ),
+                row(
+                    NoticeKind::Waiting,
+                    "infra",
+                    "dns-cutover",
+                    "waiting for input",
+                    "1m",
+                ),
+                row(
+                    NoticeKind::Error,
+                    "billing-svc",
+                    "e2e-tests",
+                    "exit 1",
+                    "12m",
+                ),
+                row(NoticeKind::Done, "nova-api", "docs-pass", "finished", "2m"),
+            ],
+            sel: 0,
+            more: 0,
+            waiting: 2,
+            total: 4,
+        }
+    }
+
+    #[test]
+    fn inbox_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Inbox(inbox_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn inbox_strip_minimum() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Inbox(inbox_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
     #[test]
     fn prompts_strip() {
         let t = transcript();

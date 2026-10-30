@@ -72,7 +72,8 @@ The first time, press **enter** to add the current folder and start a session. p
 | Key | Action |
 |---|---|
 | `ctrl+j` / `ctrl+k` | next / previous session |
-| `ctrl+g` | jump to the oldest session waiting for you |
+| `ctrl+g` | jump to whatever needs you, longest waiting first; press again for the next ("all clear" when nothing does) |
+| `ctrl+y` | the inbox: everything waiting, errored or finished since you looked |
 | `ctrl+n` | new session in the current project (`tab` adds a first prompt) |
 | `ctrl+o` | new project (path completes with `tab`) |
 | `ctrl+b` | hide or show the sidebar |
@@ -109,6 +110,10 @@ When Claude's last reply contains a shell code block, the status bar offers `alt
 ### Send one prompt to several sessions
 
 `ctrl+x` puts the sidebar in mark mode: `space` marks a session, `a` marks every session in its project, and marks can span projects. Sessions waiting for you can't be marked until you answer them. `enter` opens a strip listing the targets; type the prompt and press `enter`. Idle sessions get it now; running ones get it when their current turn ends.
+
+### Inbox
+
+`ctrl+y` lists every session that needs you, across all projects: waiting ones first (longest waiting at the top, with what they want, like `wants to run Bash`), then ones that stopped with an error, then ones that finished while you weren't looking. `enter` opens one, `p` peeks and answers it without switching, `x` dismisses an error or finished one, `esc` closes. Finished sessions drop off on their own once you've looked at them, or after 15 minutes. With two or more waiting, the status bar shows `ctrl+y list`.
 
 ### Saved prompts
 
@@ -190,6 +195,8 @@ editor = "Visual Studio Code" # what `e` opens: an app name, or a command like "
 
 [notify]
 desktop = true        # macOS notification when a session needs you, errors or finishes, unless pebl is the window you're looking at
+bell = false          # terminal bell; true, false, or a list of events: ["waiting", "error", "done"] (on Linux the default is ["waiting"])
+osc = false           # notification sent through the terminal (Ghostty, iTerm2, Kitty, WezTerm); same values
 chime = true          # play a sound for sessions you're not looking at, even when Terminal is in front
 chime_waiting = "Glass"  # any name in /System/Library/Sounds, a path to a sound file, or "" for none
 chime_done = "Pop"
@@ -212,6 +219,7 @@ search = "C-f"
 mark = "C-x"
 shell = "C-t"         # Claude Code uses ctrl+t to show its task list; rebind if you rely on it
 prompts = "C-p"       # saved prompts; inside Claude ctrl+p is otherwise "previous line"
+inbox = "C-y"         # everything that needs you
 ```
 
 The defaults follow the design and override some Claude Code shortcuts while pebl is open: `ctrl+b` (background a bash command), `ctrl+o` (transcript), `ctrl+g` (open the prompt in your editor), and `ctrl+j` (newline). While columns are open, `ctrl+w` closes a column instead of deleting a word. Rebind any of these if you rely on them. On macOS, `ctrl+space` may also be the input-source switch.

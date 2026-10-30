@@ -1,0 +1,29 @@
+---
+source: src/ui/screen.rs
+assertion_line: 655
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │
+   ◆ migrate-staging  │
+   ○ docs-pass        │
+                      │ > refactor the auth middleware to use the new session st
+ ▾ billing-svc      3 │
+   ● onboarding-flow  │ ● Update(src/middleware/auth.ts)
+   ✕ e2e-tests        │   ⎿  Updated src/middleware/auth.ts with 3 additions
+   ○ a11y-audit       │
+                      │ ✻ Refactoring… (47s · esc to interrupt)
+ ▸ infra            3 │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ Needs you                                                 2 waiting · 4 in all
+ › ◆ nova-api    migrate-staging   wants to run Bash                         4m
+   ◆ infra       dns-cutover       waiting for input                         1m
+   ✕ billing-svc e2e-tests         exit 1                                   12m
+   ✓ nova-api    docs-pass         finished                                  2m
+────────────────────────────────────────────────────────────────────────────────
+ enter open · p peek · esc close                                  ◆ 1  4 active

@@ -30,7 +30,7 @@ Manual end-to-end runs without touching your real `~/.pebl`: set `PEBL_HOME`, `P
 - `src/hotkey.rs` — macOS summon agent (Swift source embedded) and `pebl summon`.
 - `src/ui/mascot.rs` — sidebar mascots from the design (notification line: art + three message rows, one-line compact form); `src/gallery.rs` is `pebl mascots`.
 - `src/search.rs` — background index of `~/.claude/projects/*/*.jsonl` (prompts and replies only, read incrementally); `src/diff.rs` + `src/review.rs` — the review popup; `src/notify.rs` — chimes, macOS and ntfy notifications.
-- `src/prompts.rs` — saved prompts in `~/.pebl/prompts/*.md` and the `{{clipboard}}` fill; `src/app/saved_prompts.rs` — the ctrl+p picker (a child module of `app`, so it shares the state machine's private state).
+- `src/prompts.rs` — saved prompts in `~/.pebl/prompts/*.md` and the `{{clipboard}}` fill; `src/app/saved_prompts.rs` — the ctrl+p picker (a child module of `app`, so it shares the state machine's private state); `src/app/attention.rs` — the ordered "needs you" list behind ctrl+g, the ctrl+y inbox and the mascot's detail lines.
 - Split columns: extra Claude panes are joined into the `pebl-ui` window with a one-row `tabs` view pane above them. `App::apply_layout` builds a `backend::Arrangement` and the tmux backend applies it as one layout string (reordering panes first, because tmux assigns layout cells by pane order).
 
 ## Releasing

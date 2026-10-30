@@ -52,3 +52,13 @@
 - [ ] Agent adapters (Codex, OpenCode)
 - [ ] Embedded-PTY backend (no tmux)
 - [ ] Linux packaging, WSL
+
+## PRD v2 (docs/PRD-v2.md)
+- [ ] P1 Codex and OpenCode providers (on hold: no accounts to test with)
+- [x] P2 `ctrl+g` cycles through what needs you, "all clear" when nothing does
+- [x] P2 Inbox (`ctrl+y`): waiting, errored and finished sessions across projects
+- [x] P2 Terminal bell and OSC 9 notifications, chosen per event
+- [ ] P3 Auto-checks, budgets, shared project memory
+- [ ] P4 Task queue, best-of-N
+- [ ] P5 Reviewer agent, planner and workers, merge-conflict helper
+- [ ] P6 Triggers, recipes, replay and checkpoints
