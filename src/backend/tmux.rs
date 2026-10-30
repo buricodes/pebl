@@ -772,9 +772,11 @@ pub fn config(pebl: &str, truecolor: bool, cfg: &crate::config::Config) -> Strin
          set -g window-size latest\n\
          set -g detach-on-destroy off\n",
     );
+    c.push_str("set -su terminal-features\nset -as terminal-features ',*:extkeys'\n");
     if truecolor {
         c.push_str("set -as terminal-features ',*:RGB'\n");
     }
+    c.push_str("bind -n S-Enter if -F '#{@pebl_sid}' 'send-keys M-Enter' 'send-keys Enter'\n");
     if let Some(bg) = cfg.background() {
         let bg = sh_quote(bg);
         c.push_str(&format!(
@@ -882,6 +884,31 @@ mod tests {
                 .iter()
                 .any(|p| p.id == pane && p.sid.as_deref() == Some("s1") && !p.dead));
             t.kill(&pane)?;
+            Ok(())
+        })();
+        let _ = t.kill_server();
+        res.unwrap();
+    }
+
+    #[test]
+    fn config_passes_shift_enter_through_and_survives_reloads() {
+        if Command::new("tmux").arg("-V").output().is_err() {
+            return;
+        }
+        let t = Tmux::new(format!("pebl-test-cfg-{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let conf = dir.path().join("tmux.conf");
+        std::fs::write(&conf, config("pebl", true, &Default::default())).unwrap();
+        let conf = conf.display().to_string();
+        let res = (|| -> Result<()> {
+            t.run(&["new-session", "-d", "-s", "x", "sleep 30"])?;
+            t.run(&["source-file", &conf])?;
+            t.run(&["source-file", &conf])?;
+            let features = t.run(&["show", "-s", "terminal-features"])?;
+            assert_eq!(features.matches("RGB").count(), 1, "{features}");
+            assert_eq!(features.matches("extkeys").count(), 1, "{features}");
+            let keys = t.run(&["list-keys", "-T", "root", "S-Enter"])?;
+            assert!(keys.contains("send-keys M-Enter"), "{keys}");
             Ok(())
         })();
         let _ = t.kill_server();
