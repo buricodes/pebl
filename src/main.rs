@@ -201,9 +201,17 @@ fn run(cli: Cli) -> Result<()> {
                 Some(p) => p,
                 None => std::env::current_dir()?.display().to_string(),
             };
+            let shown = name.clone().unwrap_or_else(|| {
+                model::folder_name(&model::untilde(&path))
+            });
             let mut args = vec!["add".to_string(), path];
             args.extend(name);
-            print_reply(&ctl_started(&args)?)
+            let reply = ctl_started(&args)?;
+            if let Some(e) = reply.strip_prefix("error: ") {
+                bail!("{e}");
+            }
+            println!("added {shown}; open pebl to start a session in it");
+            Ok(())
         }
         Some(Cmd::New {
             project,
