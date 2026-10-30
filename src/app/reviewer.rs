@@ -43,6 +43,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             &reviewer_prompt(&task, &diff),
             Place::In(s.cwd.clone()),
         )?;
+        if let Some(r) = self.st.session_mut(&rsid) {
+            r.reviews = Some(author.to_string());
+        }
         self.reviewers.insert(rsid, author.to_string());
         self.flash(format!(
             "{name} is reviewing; its comments open with d on {}",

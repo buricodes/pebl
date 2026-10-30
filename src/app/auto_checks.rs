@@ -49,8 +49,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
     }
 
+    pub(super) fn borrows_folder(&self, sid: &str) -> bool {
+        self.st.session(sid).is_some_and(|s| s.reviews.is_some())
+    }
+
     pub(super) fn turn_ended(&mut self, sid: &str) {
-        if !self.checks_for(sid).is_empty() {
+        if !self.borrows_folder(sid) && !self.checks_for(sid).is_empty() {
             self.start_checks(sid, false);
         }
     }
@@ -152,6 +156,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     pub(super) fn run_checks_now(&mut self, sid: &str) -> Result<()> {
+        if self.borrows_folder(sid) {
+            return Err(anyhow!(
+                "this session works in another session's folder; run the checks on that one"
+            ));
+        }
         if self.checks_for(sid).is_empty() {
             return Err(anyhow!(
                 "no checks found: no test or lint scripts here (pebl checks shows how to add some)"

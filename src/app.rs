@@ -1606,6 +1606,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             since: now(),
             exit_code: None,
             auto_name,
+            reviews: None,
         };
         let mut argv = self.claude_argv(&s, prompt, false);
         if let Some(w) = &s.worktree {
@@ -2540,6 +2541,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             since: now(),
             exit_code: None,
             auto_name: false,
+            reviews: None,
         });
         self.resume(&sid)?;
         self.sync_main();
@@ -4824,6 +4826,14 @@ mod tests {
         assert!(saved.contains("guard the empty list") && saved.contains("\"line\":9"));
         assert!(a.view().flash.unwrap().contains("2 comments"));
         assert!(a.reviewers.is_empty());
+        std::fs::write(d.path().join("Makefile"), "test:\n\tfalse\n").unwrap();
+        a.handle_hook(&r.id, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&r.id, "Stop", &serde_json::Value::Null);
+        assert_eq!(a.check_badge(&r.id), None);
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(r.id.clone()));
+        let hints: Vec<String> = a.view().hints.into_iter().map(|(k, _)| k).collect();
+        assert!(!hints.contains(&"t".to_string()) && !hints.contains(&"R".to_string()));
     }
 
     #[test]
@@ -4908,10 +4918,11 @@ mod tests {
         };
         a.set_focus(Focus::Sidebar);
         a.cursor = Some(CurRef::Session(ids[0].clone()));
-        assert_eq!(keys_of(&a), vec!["enter", "d", "R", "r", "x", "?"]);
+        assert_eq!(keys_of(&a), vec!["d", "R", "c", "?"]);
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         assert_eq!(a.view().hints[0], ("enter".into(), "answer it".into()));
         assert_eq!(keys_of(&a).len(), 6);
+        assert_eq!(a.view().hints[1].0, "p");
         assert_eq!(keys_of(&a).last().unwrap(), "?");
         a.cursor = Some(CurRef::Project(a.st.projects[0].id.clone()));
         assert_eq!(keys_of(&a), vec!["ctrl+n", "q", "N", "space", "?"]);

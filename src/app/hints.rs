@@ -61,11 +61,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if s.worktree.is_some() && s.status == Status::Idle {
             h.add("f", "finish: merge or PR");
         }
-        h.add("enter", "open");
-        h.add("d", "review changes");
-        h.add("R", "ask a reviewer");
-        h.add("r", "rename");
-        h.add("x", "kill");
+        if !self.borrows_folder(sid) {
+            h.add("d", "review changes");
+            h.add("R", "ask a reviewer");
+        }
+        h.add("c", "open in a column");
         h.done()
     }
 

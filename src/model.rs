@@ -44,6 +44,8 @@ pub struct Session {
     pub exit_code: Option<i32>,
     #[serde(default)]
     pub auto_name: bool,
+    #[serde(default)]
+    pub reviews: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

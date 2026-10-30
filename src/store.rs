@@ -83,6 +83,7 @@ mod tests {
             since: 0,
             exit_code: None,
             auto_name: false,
+            reviews: None,
         }
     }
 
