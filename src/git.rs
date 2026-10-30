@@ -151,7 +151,13 @@ pub fn ahead(dir: &Path, base: &str, branch: &str) -> usize {
         .unwrap_or(0)
 }
 
-pub fn merge(repo: &Path, branch: &str) -> Result<()> {
+#[derive(Debug, PartialEq)]
+pub enum Merged {
+    Clean,
+    Conflicts(Vec<String>),
+}
+
+pub fn merge(repo: &Path, branch: &str) -> Result<Merged> {
     let n = dirty(repo);
     if n > 0 {
         bail!(
@@ -160,10 +166,23 @@ pub fn merge(repo: &Path, branch: &str) -> Result<()> {
         );
     }
     if let Err(e) = run(repo, &["merge", "--no-edit", branch]) {
+        let files: Vec<String> = run(repo, &["diff", "--name-only", "--diff-filter=U"])
+            .map(|out| out.lines().map(str::to_string).collect())
+            .unwrap_or_default();
         let _ = run(repo, &["merge", "--abort"]);
-        bail!("merge stopped ({e}); ask the session to rebase onto the main branch");
+        if files.is_empty() {
+            bail!("merge stopped ({e})");
+        }
+        return Ok(Merged::Conflicts(files));
     }
-    Ok(())
+    Ok(Merged::Clean)
+}
+
+pub fn conflict_prompt(branch: &str, into: &str, files: &[String]) -> String {
+    let list: String = files.iter().map(|f| format!("\n- {f}")).collect();
+    format!(
+        "Merging {branch} into {into} conflicts in these files:\n{list}\n\nIn this worktree, rebase onto {into} (`git rebase {into}`) and resolve each conflict so both sides' intent survives. Run the project's tests, finish the rebase, and don't push. Then tell me, file by file, how you resolved it."
+    )
 }
 
 pub fn remove_worktree(repo: &Path, wt: &Path, branch: &str, force: bool) -> Result<()> {
@@ -264,7 +283,7 @@ mod tests {
         assert_eq!(branch(&wt).unwrap(), "pebl/fix");
         assert_eq!(ahead(&repo, "main", "pebl/fix"), 1);
 
-        merge(&repo, "pebl/fix").unwrap();
+        assert_eq!(merge(&repo, "pebl/fix").unwrap(), Merged::Clean);
         assert_eq!(
             std::fs::read_to_string(repo.join("a.txt")).unwrap(),
             "two\n"
@@ -272,5 +291,33 @@ mod tests {
         remove_worktree(&repo, &wt, "pebl/fix", false).unwrap();
         assert!(!wt.exists());
         assert!(run(&repo, &["rev-parse", "--verify", "--quiet", "pebl/fix"]).is_err());
+    }
+
+    #[test]
+    fn conflicting_merge_lists_files_and_leaves_the_repo_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("api");
+        std::fs::create_dir_all(&repo).unwrap();
+        sh(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        sh(&repo, &["add", "."]);
+        sh(&repo, &["commit", "-qm", "init"]);
+        let wt = add_worktree(&repo, &tmp.path().join("wts"), "api", "fix").unwrap();
+        std::fs::write(wt.join("a.txt"), "theirs\n").unwrap();
+        sh(&wt, &["commit", "-qam", "theirs"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").unwrap();
+        sh(&repo, &["commit", "-qam", "ours"]);
+
+        assert_eq!(
+            merge(&repo, "pebl/fix").unwrap(),
+            Merged::Conflicts(vec!["a.txt".into()])
+        );
+        assert_eq!(dirty(&repo), 0);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "ours\n"
+        );
+        let p = conflict_prompt("pebl/fix", "main", &["a.txt".into()]);
+        assert!(p.contains("- a.txt") && p.contains("git rebase main"));
     }
 }

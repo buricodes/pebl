@@ -410,6 +410,26 @@ mod tests {
             gh: true,
             confirm_discard: false,
             busy: None,
+            conflicts: Vec::new(),
+        });
+        v.focus = Focus::Bar;
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn finish_strip_with_conflicts() {
+        let mut v = base();
+        v.mode = Mode::Finish(Finish {
+            session: "auth-refactor".into(),
+            branch: "pebl/auth-refactor".into(),
+            into: "main".into(),
+            ahead: 3,
+            dirty: 0,
+            gh: true,
+            confirm_discard: false,
+            busy: None,
+            conflicts: vec!["src/middleware/auth.ts".into(), "src/session.ts".into()],
         });
         v.focus = Focus::Bar;
         let t = transcript();

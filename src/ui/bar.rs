@@ -198,6 +198,23 @@ fn finish_rows(f: &Finish, flash: Option<&str>) -> Vec<Vec<Seg>> {
         ]
     };
     let clean = f.dirty == 0;
+    if !f.conflicts.is_empty() {
+        rows.insert(
+            2,
+            vec![
+                seg("   ✕ ", Tok::Err),
+                seg(
+                    format!("conflicts with {} in {}", f.into, f.conflicts.join(", ")),
+                    Tok::Err,
+                ),
+            ],
+        );
+        rows.push(opt(
+            "c",
+            format!("ask Claude to rebase onto {} and resolve them", f.into),
+            true,
+        ));
+    }
     if f.dirty > 0 {
         rows.push(opt("a", "ask Claude to commit its changes".into(), true));
     }
@@ -1191,6 +1208,13 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ("↑/↓", "choose"),
             ("tab", "scope"),
             ("esc", "close"),
+        ]),
+        Mode::Finish(f) if !f.conflicts.is_empty() => keys(&[
+            ("c", "resolve"),
+            ("m", "merge"),
+            ("p", "pull request"),
+            ("d", "discard"),
+            ("esc", "cancel"),
         ]),
         Mode::Finish(_) => keys(&[
             ("a", "commit"),

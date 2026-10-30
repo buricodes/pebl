@@ -413,6 +413,8 @@ pub struct Finish {
     pub gh: bool,
     pub confirm_discard: bool,
     pub busy: Option<String>,
+    #[serde(default)]
+    pub conflicts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

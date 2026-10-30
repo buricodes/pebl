@@ -2609,6 +2609,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             gh: git::has_gh(),
             confirm_discard: false,
             busy: None,
+            conflicts: Vec::new(),
         };
         self.mode = IMode::Finish {
             sid: sid.into(),
@@ -2663,6 +2664,25 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.flash(format!("asked {} to commit", s.name));
                 return Ok(());
             }
+            KeyCode::Char('c') => {
+                if info.conflicts.is_empty() {
+                    self.mode = IMode::Finish { sid, info };
+                    bail!("no conflicts to resolve; m merges");
+                }
+                let pane = s
+                    .pane
+                    .clone()
+                    .ok_or_else(|| anyhow!("{} isn't running", s.name))?;
+                let prompt = git::conflict_prompt(&info.branch, &info.into, &info.conflicts);
+                self.be.send_text(&pane, &prompt, true)?;
+                self.cancel_mode();
+                self.set_focus(Focus::Sidebar);
+                self.flash(format!(
+                    "asked {} to rebase and resolve the conflicts · f then m when it's done",
+                    s.name
+                ));
+                return Ok(());
+            }
             KeyCode::Char('m') => {
                 if info.dirty > 0 {
                     self.mode = IMode::Finish { sid, info };
@@ -2672,7 +2692,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     self.mode = IMode::Finish { sid, info };
                     bail!("nothing to merge: the branch has no new commits");
                 }
-                git::merge(&repo, &info.branch)?;
+                if let git::Merged::Conflicts(files) = git::merge(&repo, &info.branch)? {
+                    let n = files.len();
+                    info.conflicts = files;
+                    self.mode = IMode::Finish { sid, info };
+                    self.flash(format!(
+                        "merging conflicts in {n} file{} · c asks Claude to resolve them",
+                        if n == 1 { "" } else { "s" }
+                    ));
+                    return Ok(());
+                }
                 self.cancel_mode();
                 self.kill(&CurRef::Session(sid))?;
                 git::remove_worktree(&repo, &wt, &info.branch, false)?;
