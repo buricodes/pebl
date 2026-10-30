@@ -112,7 +112,7 @@ When Claude's last reply contains a shell code block, the status bar offers `alt
 
 ### Saved prompts
 
-`ctrl+p` lists your saved prompts above the status bar. Type to filter, `↑/↓` to choose, `enter` to send it to the session you're in, or `tab` to type it into Claude's input so you can edit it first. Running sessions get it when their turn ends. In mark mode (`ctrl+x`), `p` sends a saved prompt to every marked session.
+`ctrl+p` lists your saved prompts above the status bar. Type to filter (if nothing matches, `enter` saves what you typed as a new prompt), `↑/↓` to choose, `enter` to send it to the session you're in, or `tab` to type it into Claude's input so you can edit it first. Running sessions get it when their turn ends. In mark mode (`ctrl+x`), `p` sends a saved prompt to every marked session.
 
 Put `{{clipboard}}` in a prompt where pasted text should go. Copy a ticket, press `ctrl+p`, pick "investigate ticket" (pebl adds that one for you) and press `enter`: the ticket lands where `{{clipboard}}` was. The strip shows the clipboard's first line so you know what will be sent.
 

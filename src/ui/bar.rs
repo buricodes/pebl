@@ -1,8 +1,8 @@
 use super::theme::Tok;
 use super::{keys, len, seg, seg_len, segb, Painter, Seg};
 use crate::view::{
-    Broadcast, Clip, Finish, Layout, Mode, NewProject, Peek, PromptStep, PromptsView, SearchView,
-    View,
+    Broadcast, Clip, Finish, Layout, Mode, NameFrom, NewProject, Peek, PromptStep, PromptsView,
+    SearchView, View,
 };
 
 fn shell_line(v: &View) -> bool {
@@ -308,20 +308,24 @@ fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
     let w = p.w();
     let target = vec![seg("→ ", Tok::Dim), seg(pv.target.clone(), Tok::Mute)];
     let tw = seg_len(&target) as i32;
+    let count = match pv.total {
+        1 => "1 prompt".to_string(),
+        n => format!("{n} prompts"),
+    };
     let mut y = 0;
-    let line = match &pv.step {
-        PromptStep::Name { text, last } => vec![
+    let (label, field) = match &pv.step {
+        PromptStep::Name { text, from } => (
             segb(
-                if *last {
-                    "save last prompt as "
-                } else {
-                    "new prompt name "
+                match from {
+                    NameFrom::New => "new prompt name ",
+                    NameFrom::Last => "save last prompt as ",
+                    NameFrom::Typed => "save what you typed as ",
                 },
                 Tok::Acc,
             ),
-            seg(text.clone(), Tok::Fg),
-        ],
-        _ => vec![seg("/ ", Tok::Acc), seg(pv.query.clone(), Tok::Fg)],
+            text.as_str(),
+        ),
+        _ => (seg("/ ", Tok::Acc), pv.query.as_str()),
     };
     if wide {
         p.segs(1, y, &[segb("Saved prompts", Tok::Fg)]);
@@ -333,27 +337,34 @@ fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
         (PromptStep::Name { .. }, false) => 1,
         _ => p.segs(1, y, &[segb("prompts ", Tok::Fg)]),
     };
-    let e = p.segs(x, y, &line);
+    let right = if wide { len(&count) as i32 } else { tw };
+    let room = (w - 1 - right - 3 - x - len(&label.0) as i32).max(1) as usize;
+    let e = p.segs(x, y, &[label, seg(super::fit_tail(field, room), Tok::Fg)]);
     if !matches!(pv.step, PromptStep::ConfirmDelete) {
         p.caret(e, y);
     }
     if wide {
-        let n = match pv.total {
-            1 => "1 prompt".to_string(),
-            n => format!("{n} prompts"),
-        };
-        p.rt(w - 1, y, &n, Tok::Dim, false);
+        p.rt(w - 1, y, &count, Tok::Dim, false);
     } else {
         p.segs(w - 1 - tw, y, &target);
     }
     y += if wide { 2 } else { 1 };
     if pv.rows.is_empty() {
-        let msg = if pv.total == 0 {
-            "No saved prompts yet. ctrl+a adds one.".to_string()
-        } else {
-            format!("No prompts match “{}”.", pv.query.trim())
+        let typed = !pv.query.trim().is_empty();
+        let (first, second) = match (typed, pv.total) {
+            (true, _) => (
+                "Nothing matches. enter saves what you typed as a new prompt.",
+                "For a longer prompt, ctrl+a writes it in your editor.",
+            ),
+            (false, 0) => (
+                "No saved prompts yet. Type one here and press enter,",
+                "or ctrl+a to write it in your editor.",
+            ),
+            (false, _) => ("", ""),
         };
-        p.t(3, y, &msg, Tok::Mute, false);
+        let room = (w - 4).max(1) as usize;
+        p.t(3, y, &super::fit(first, room), Tok::Mute, false);
+        p.t(3, y + 1, &super::fit(second, room), Tok::Dim, false);
         return;
     }
     let name_w: i32 = if wide { 24 } else { 18 };
@@ -784,6 +795,11 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         Mode::Prompts(pv) => match &pv.step {
             PromptStep::Name { .. } => keys(&[("enter", "save"), ("esc", "back")]),
             PromptStep::ConfirmDelete => keys(&[("y", "delete"), ("esc", "keep")]),
+            PromptStep::List if pv.rows.is_empty() => keys(&[
+                ("enter", "save as prompt"),
+                (if short { "^a" } else { "ctrl+a" }, "write in editor"),
+                ("esc", "close"),
+            ]),
             PromptStep::List if short => keys(&[
                 ("enter", "send"),
                 ("tab", "type"),

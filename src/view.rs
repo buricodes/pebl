@@ -296,9 +296,16 @@ pub enum PromptStep {
     List,
     Name {
         text: String,
-        last: bool,
+        from: NameFrom,
     },
     ConfirmDelete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum NameFrom {
+    New,
+    Last,
+    Typed,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

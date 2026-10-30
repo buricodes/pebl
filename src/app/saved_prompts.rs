@@ -2,7 +2,7 @@ use super::{edit, App, IMode};
 use crate::backend::{SessionBackend, UiBackend};
 use crate::ipc::{Key, KeyCode};
 use crate::prompts::{self, Prompt};
-use crate::view::{Clip, Focus, PromptRow, PromptStep, PromptsView};
+use crate::view::{Clip, Focus, NameFrom, PromptRow, PromptStep, PromptsView};
 use anyhow::{anyhow, bail, Result};
 
 const ROWS: usize = 6;
@@ -61,7 +61,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
     pub(super) fn prompts_key(&mut self, mut pk: Picker, k: Key) -> Result<()> {
         let res = match std::mem::take(&mut pk.step) {
             PromptStep::List => self.list_key(&mut pk, k),
-            PromptStep::Name { text, last } => self.name_key(&mut pk, text, last, k),
+            PromptStep::Name { text, from } => self.name_key(&mut pk, text, from, k),
             PromptStep::ConfirmDelete => self.delete_key(&mut pk, k),
         };
         match res {
@@ -83,6 +83,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
             KeyCode::Down => {
                 pk.sel = (pk.sel + 1).min(self.shown(&pk.query).len().saturating_sub(1))
             }
+            KeyCode::Enter if self.selected(pk).is_none() && !pk.query.trim().is_empty() => {
+                pk.step = PromptStep::Name {
+                    text: suggest_name(&pk.query),
+                    from: NameFrom::Typed,
+                }
+            }
             KeyCode::Enter | KeyCode::Tab => {
                 let p = self
                     .selected(pk)
@@ -98,7 +104,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             KeyCode::Char('a') if k.ctrl => {
                 pk.step = PromptStep::Name {
                     text: String::new(),
-                    last: false,
+                    from: NameFrom::New,
                 }
             }
             KeyCode::Char('s') if k.ctrl => {
@@ -107,7 +113,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 pk.step = PromptStep::Name {
                     text: String::new(),
-                    last: true,
+                    from: NameFrom::Last,
                 }
             }
             KeyCode::Char('e') if k.ctrl => {
@@ -138,38 +144,50 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(false)
     }
 
-    fn name_key(&mut self, pk: &mut Picker, mut text: String, last: bool, k: Key) -> Result<bool> {
+    fn name_key(
+        &mut self,
+        pk: &mut Picker,
+        mut text: String,
+        from: NameFrom,
+        k: Key,
+    ) -> Result<bool> {
         match k.code {
             KeyCode::Esc => {}
             KeyCode::Enter => {
                 pk.step = PromptStep::Name {
                     text: text.clone(),
-                    last,
+                    from,
                 };
-                let path = if last {
-                    let body = self
-                        .last_prompt
-                        .get(&pk.targets[0])
-                        .cloned()
-                        .ok_or_else(|| anyhow!("no prompt sent in this session yet"))?;
-                    prompts::create(&self.env.prompts, &text, &body)?
-                } else {
-                    prompts::create_blank(&self.env.prompts, &text)?
+                let dir = self.env.prompts.clone();
+                let path = match from {
+                    NameFrom::New => prompts::create_blank(&dir, &text)?,
+                    NameFrom::Last => {
+                        let body = self
+                            .last_prompt
+                            .get(&pk.targets[0])
+                            .cloned()
+                            .ok_or_else(|| anyhow!("no prompt sent in this session yet"))?;
+                        prompts::create(&dir, &text, &body)?
+                    }
+                    NameFrom::Typed => prompts::create(&dir, &text, pk.query.trim())?,
                 };
                 self.refresh_prompts();
                 pk.query.clear();
                 pk.sel = self.saved.iter().position(|p| p.path == path).unwrap_or(0);
                 pk.step = PromptStep::List;
-                if last {
-                    self.flash(format!("saved “{}”: ctrl+e to edit it", text.trim()));
-                } else {
+                if from == NameFrom::New {
                     self.launch_editor(&path)?;
                     self.flash(format!("write “{}” in the editor, then save", text.trim()));
+                } else {
+                    self.flash(format!(
+                        "saved “{}”: enter sends it, ctrl+e edits it",
+                        text.trim()
+                    ));
                 }
             }
             _ => {
                 edit(&mut text, &k, false);
-                pk.step = PromptStep::Name { text, last };
+                pk.step = PromptStep::Name { text, from };
             }
         }
         Ok(false)
@@ -278,6 +296,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
             step: pk.step.clone(),
         }
     }
+}
+
+fn suggest_name(text: &str) -> String {
+    text.split_whitespace()
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(40)
+        .collect()
 }
 
 fn clip_summary(clip: Option<&str>) -> Clip {

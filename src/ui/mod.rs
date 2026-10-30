@@ -59,6 +59,19 @@ pub fn fit(s: &str, n: usize) -> String {
     out
 }
 
+pub fn fit_tail(s: &str, n: usize) -> String {
+    let l = len(s);
+    if l <= n {
+        return s.to_string();
+    }
+    if n == 0 {
+        return String::new();
+    }
+    let mut out = String::from("…");
+    out.extend(s.chars().skip(l - (n - 1)));
+    out
+}
+
 pub fn glyph(st: Status) -> (&'static str, Tok, bool) {
     match st {
         Status::Running => ("●", Tok::Ok, false),
@@ -196,5 +209,11 @@ mod tests {
     fn fit_truncates_with_ellipsis() {
         assert_eq!(fit("onboarding-flow", 8), "onboard…");
         assert_eq!(fit("dns", 8), "dns");
+    }
+
+    #[test]
+    fn fit_tail_keeps_the_end() {
+        assert_eq!(fit_tail("hey what's up so how", 8), "… so how");
+        assert_eq!(fit_tail("dns", 8), "dns");
     }
 }
