@@ -236,6 +236,8 @@ pub enum Mode {
     Search(SearchView),
     Prompts(PromptsView),
     Inbox(InboxView),
+    Queue(QueueView),
+    Compare(CompareView),
     Note {
         project: String,
         text: String,
@@ -274,6 +276,46 @@ pub struct SearchView {
     pub project: String,
     pub projects: usize,
     pub indexing: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueueView {
+    pub project: String,
+    pub rows: Vec<QueueRow>,
+    pub sel: usize,
+    pub more: usize,
+    pub limit: usize,
+    pub input: Option<(String, u8)>,
+    pub confirm: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QueueRow {
+    pub state: crate::model::TaskState,
+    pub title: String,
+    pub attempts: u8,
+    pub detail: String,
+    pub age: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CompareView {
+    pub title: String,
+    pub rows: Vec<CompareRow>,
+    pub sel: usize,
+    pub confirm: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CompareRow {
+    pub name: String,
+    pub status: Status,
+    pub check: Option<CheckBadge>,
+    pub files: usize,
+    pub adds: usize,
+    pub dels: usize,
+    pub tokens: String,
+    pub time: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

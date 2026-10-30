@@ -61,6 +61,7 @@
 - [x] P3 Auto-checks after each turn (`[checks]` in pebl.toml, `t` / `T`, `auto_fix`)
 - [x] P3 Project notes (`N`), given to every new session with `--append-system-prompt-file`
 - [ ] P3 Budgets (skipped for now: seat plan, no per-token cost)
-- [ ] P4 Task queue, best-of-N
+- [x] P4 Task queue (`q`, `pebl queue add`, tasks.md, `max_parallel`)
+- [x] P4 Best-of-N with a compare view and winner pick
 - [ ] P5 Reviewer agent, planner and workers, merge-conflict helper
 - [ ] P6 Triggers, recipes, replay and checkpoints

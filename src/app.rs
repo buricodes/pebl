@@ -2,6 +2,7 @@ mod attention;
 mod auto_checks;
 mod notes;
 mod saved_prompts;
+mod task_queue;
 
 use crate::backend::{Arrangement, SessionBackend, SpawnSpec, UiBackend, UiPanes};
 use crate::ipc::{Input, Key, KeyCode, Role};
@@ -82,6 +83,18 @@ enum IMode {
     Note {
         pid: String,
         text: String,
+    },
+    Queue {
+        pid: String,
+        sel: usize,
+        input: Option<(String, u8)>,
+        confirm: bool,
+    },
+    Compare {
+        task: String,
+        sel: usize,
+        stats: Vec<task_queue::Stat>,
+        confirm: bool,
     },
     DrawerResize,
 }
@@ -430,6 +443,19 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Ok(String::new())
             }
             ["prompts"] => self.start_prompts().map(|_| String::new()),
+            ["queue"] => self.start_queue().map(|_| String::new()),
+            ["queue-add", project, attempts, prompt] => {
+                let pid = self.project_for(project);
+                pid.and_then(|pid| {
+                    let n = attempts.parse::<u8>().unwrap_or(1);
+                    let id = self.queue_add(&pid, prompt, n)?;
+                    self.run_queue();
+                    let t = self.st.tasks.iter().find(|t| t.id == id);
+                    Ok(t.map(|t| format!("queued “{}”", t.title))
+                        .unwrap_or_default())
+                })
+            }
+            ["queue-ls"] => Ok(self.queue_ls()),
             ["inbox"] => {
                 self.start_inbox();
                 Ok(String::new())
@@ -673,6 +699,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
         self.refresh_shells();
         self.collect_checks();
+        self.run_queue();
         self.deliver_queued();
         self.notify();
         if self.ticks.is_multiple_of(3) {
@@ -1501,6 +1528,18 @@ impl<B: SessionBackend + UiBackend> App<B> {
         prompt: &str,
         worktree: bool,
     ) -> Result<String> {
+        let sid = self.create_session(pid, name, prompt, worktree)?;
+        self.activate(&sid);
+        Ok(sid)
+    }
+
+    fn create_session(
+        &mut self,
+        pid: &str,
+        name: &str,
+        prompt: &str,
+        worktree: bool,
+    ) -> Result<String> {
         let p = self
             .st
             .project(pid)
@@ -1561,7 +1600,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
             s.status = Status::Running;
         }
         self.st.sessions.push(s);
-        self.activate(&sid);
         Ok(sid)
     }
 
@@ -1720,18 +1758,43 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
+    fn project_for(&mut self, project: &str) -> Result<String> {
+        if project.is_empty() {
+            return self
+                .current_project()
+                .ok_or_else(|| anyhow!("no project; run `pebl add` first"));
+        }
+        if let Some(p) = self.st.projects.iter().find(|p| p.name == project) {
+            return Ok(p.id.clone());
+        }
+        let path =
+            std::fs::canonicalize(untilde(project)).map_err(|e| anyhow!("{project}: {e}"))?;
+        if let Some(p) = self.st.project_by_path(&path) {
+            return Ok(p.id.clone());
+        }
+        Ok(self.st.add_project(path, None))
+    }
+
     fn new_from_cli(&mut self, project: &str, name: &str, prompt: &str) -> Result<String> {
-        let pid = if project.is_empty() {
-            self.current_project()
-                .ok_or_else(|| anyhow!("no project; run `pebl add` first"))?
-        } else if let Some(p) = self.st.projects.iter().find(|p| p.name == project) {
-            p.id.clone()
-        } else {
-            let path =
-                std::fs::canonicalize(untilde(project)).map_err(|e| anyhow!("{project}: {e}"))?;
-            self.st.add_project(path, None)
-        };
+        let pid = self.project_for(project)?;
         self.spawn_session(&pid, name, prompt, false)
+    }
+
+    fn queue_ls(&self) -> String {
+        let mut out = String::new();
+        for t in &self.st.tasks {
+            let project = self
+                .st
+                .project(&t.project)
+                .map(|p| p.name.as_str())
+                .unwrap_or("");
+            let state = serde_json::to_value(t.state)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            out.push_str(&format!("{project}\t{state}\t{}\t{}\n", t.title, t.note));
+        }
+        out
     }
 
     fn ls(&self) -> String {
@@ -1877,6 +1940,8 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 | IMode::Broadcast { .. }
                 | IMode::Prompts(_)
                 | IMode::Inbox { .. }
+                | IMode::Queue { .. }
+                | IMode::Compare { .. }
         ) {
             self.mode = IMode::Normal;
             self.apply_layout();
@@ -2851,6 +2916,21 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let IMode::Note { pid, text } = self.mode.clone() {
             return self.note_key(pid, text, k);
         }
+        if let IMode::Queue {
+            pid, sel, input, ..
+        } = self.mode.clone()
+        {
+            return self.queue_key(pid, sel, input, k);
+        }
+        if let IMode::Compare {
+            task,
+            sel,
+            stats,
+            confirm,
+        } = self.mode.clone()
+        {
+            return self.compare_key(task, sel, stats, confirm, k);
+        }
         if k.ctrl {
             return Ok(());
         }
@@ -2875,7 +2955,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 Ok(())
             }
-            IMode::Broadcast { .. } | IMode::Prompts(_) | IMode::Note { .. } => Ok(()),
+            IMode::Broadcast { .. }
+            | IMode::Prompts(_)
+            | IMode::Note { .. }
+            | IMode::Queue { .. }
+            | IMode::Compare { .. } => Ok(()),
             IMode::Inbox { sel } => self.inbox_key(sel, k),
             IMode::Search {
                 query,
@@ -3199,6 +3283,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.review(&sid)?;
             }
             Char('N') => self.start_note()?,
+            Char('q') => self.start_queue()?,
             Char('t') | Char('T') => {
                 let sid = match &self.cursor {
                     Some(CurRef::Session(sid)) => sid.clone(),
@@ -3460,6 +3545,18 @@ impl<B: SessionBackend + UiBackend> App<B> {
             IMode::Mark { marks } => Mode::Mark { count: marks.len() },
             IMode::Prompts(pk) => Mode::Prompts(self.prompts_view(pk)),
             IMode::Inbox { sel } => Mode::Inbox(self.inbox_view(*sel)),
+            IMode::Queue {
+                pid,
+                sel,
+                input,
+                confirm,
+            } => Mode::Queue(self.queue_view(pid, *sel, input, *confirm)),
+            IMode::Compare {
+                task,
+                sel,
+                stats,
+                confirm,
+            } => Mode::Compare(self.compare_view(task, *sel, stats, *confirm)),
             IMode::Broadcast { marks, text } => {
                 let targets: Vec<crate::view::Target> = marks
                     .iter()
@@ -4461,6 +4558,140 @@ mod tests {
             )),
             "{log}"
         );
+    }
+
+    fn git_repo(dir: &std::path::Path) {
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "start",
+        ]);
+    }
+
+    fn task_states(a: &App<Fake>) -> Vec<crate::model::TaskState> {
+        a.st.tasks.iter().map(|t| t.state).collect()
+    }
+
+    #[test]
+    fn queue_runs_tasks_in_worktrees_a_slot_at_a_time() {
+        use crate::model::TaskState::*;
+        let (mut a, d) = app();
+        git_repo(d.path());
+        std::fs::write(d.path().join("pebl.toml"), "[queue]\nmax_parallel = 1\n").unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        let out = a.handle_ctl(&[
+            "queue-add".into(),
+            d.path().display().to_string(),
+            "1".into(),
+            "Fix the rota export".into(),
+        ]);
+        assert_eq!(out, "queued “Fix the rota export”");
+        a.handle_ctl(&[
+            "queue-add".into(),
+            d.path().display().to_string(),
+            "1".into(),
+            "Add CSV download".into(),
+        ]);
+        assert_eq!(task_states(&a), vec![Running, Pending]);
+        let first = a.st.tasks[0].sessions[0].clone();
+        let s = a.st.session(&first).unwrap().clone();
+        assert!(s.worktree.as_ref().is_some_and(|w| w.exists()));
+        assert_eq!(s.name, "fix-the-rota-export-t2");
+        assert_ne!(a.active.as_deref(), Some(first.as_str()));
+        a.handle_hook(&first, "Stop", &serde_json::Value::Null);
+        a.tick();
+        assert_eq!(task_states(&a), vec![Review, Running]);
+        assert_eq!(a.st.tasks[0].note, "ready for review");
+        let second = a.st.tasks[1].sessions[0].clone();
+        a.handle_ctl(&["queue".into()]);
+        let Mode::Queue(qv) = a.view().mode else {
+            panic!("queue not open")
+        };
+        assert_eq!(qv.rows.len(), 2);
+        assert_eq!(qv.limit, 1);
+        key(&mut a, Role::Bar, KeyCode::Char('D'));
+        assert_eq!(task_states(&a), vec![Done, Running]);
+        a.st.session_mut(&second).unwrap().status = Status::Error;
+        a.tick();
+        assert_eq!(task_states(&a), vec![Done, Failed]);
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('r'));
+        assert_eq!(task_states(&a), vec![Done, Running]);
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        assert!(matches!(a.view().mode, Mode::Queue(ref q) if q.confirm));
+        let wt =
+            a.st.session(&a.st.tasks[1].sessions[0])
+                .unwrap()
+                .worktree
+                .clone()
+                .unwrap();
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        assert_eq!(task_states(&a), vec![Done]);
+        assert!(!wt.exists());
+        let log = a.handle_ctl(&["queue-ls".into()]);
+        assert!(log.contains("\tdone\tFix the rota export\t"), "{log}");
+    }
+
+    #[test]
+    fn best_of_n_compares_attempts_and_keeps_the_winner() {
+        use crate::model::TaskState::*;
+        let (mut a, d) = app();
+        git_repo(d.path());
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        let pid = a.st.projects[0].id.clone();
+        a.handle_ctl(&["queue".into()]);
+        key(&mut a, Role::Bar, KeyCode::Char('a'));
+        typ_role(&mut a, Role::Bar, "Speed up the dashboard");
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.st.tasks[0].project, pid);
+        assert_eq!(a.st.tasks[0].attempts, 3);
+        let sids = a.st.tasks[0].sessions.clone();
+        assert_eq!(sids.len(), 3);
+        for sid in &sids {
+            a.handle_hook(sid, "Stop", &serde_json::Value::Null);
+        }
+        a.tick();
+        assert_eq!(task_states(&a), vec![Review]);
+        assert_eq!(a.st.tasks[0].note, "3 of 3 attempts ready to compare");
+        let wt = a.st.session(&sids[2]).unwrap().worktree.clone().unwrap();
+        std::fs::write(wt.join("fast.js"), "a\nb\n").unwrap();
+        a.handle_ctl(&["queue".into()]);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let Mode::Compare(cv) = a.view().mode else {
+            panic!("compare not open")
+        };
+        assert_eq!(cv.rows.len(), 3);
+        assert_eq!((cv.rows[2].files, cv.rows[2].adds), (1, 2));
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('w'));
+        assert!(matches!(a.view().mode, Mode::Compare(ref c) if c.confirm));
+        let losers: Vec<_> = sids[..2]
+            .iter()
+            .map(|s| a.st.session(s).unwrap().worktree.clone().unwrap())
+            .collect();
+        key(&mut a, Role::Bar, KeyCode::Char('w'));
+        assert_eq!(a.st.tasks[0].sessions, vec![sids[2].clone()]);
+        assert!(a.st.session(&sids[0]).is_none() && a.st.session(&sids[1]).is_none());
+        assert!(losers.iter().all(|w| !w.exists()));
+        assert!(wt.exists());
+        assert_eq!(a.active.as_deref(), Some(sids[2].as_str()));
     }
 
     #[test]

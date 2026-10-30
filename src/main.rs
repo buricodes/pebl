@@ -16,6 +16,7 @@ mod model;
 mod notify;
 mod paths;
 mod prompts;
+mod queue;
 mod review;
 mod search;
 mod status;
@@ -60,6 +61,11 @@ enum Cmd {
     },
     #[command(about = "List sessions with status (tab separated)")]
     Ls,
+    #[command(about = "Queue tasks that run in their own worktrees, a few at a time")]
+    Queue {
+        #[command(subcommand)]
+        action: QueueCmd,
+    },
     #[command(about = "Check tmux, claude and the hook setup")]
     Doctor,
     #[command(about = "Bring pebl to the front, or open it in a new terminal window")]
@@ -123,6 +129,36 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum QueueCmd {
+    #[command(about = "Add a task, or every open \"- [ ]\" item from a Markdown file")]
+    Add {
+        #[arg(help = "What to do (the first line becomes the title)")]
+        prompt: Option<String>,
+        #[arg(
+            long,
+            short,
+            help = "Project name or path (default: the selected project)"
+        )]
+        project: Option<String>,
+        #[arg(
+            long,
+            short,
+            help = "Read tasks from a Markdown checklist like tasks.md"
+        )]
+        file: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            short,
+            default_value_t = 1,
+            help = "Run this many attempts in parallel and pick the best (1 to 4)"
+        )]
+        attempts: u8,
+    },
+    #[command(about = "List queued tasks (tab separated)")]
+    Ls,
+}
+
+#[derive(Subcommand)]
 enum HotkeyCmd {
     #[command(about = "Install the launchd agent")]
     Install {
@@ -171,6 +207,41 @@ fn run(cli: Cli) -> Result<()> {
             name.unwrap_or_default(),
             prompt.unwrap_or_default(),
         ])?),
+        Some(Cmd::Queue { action }) => match action {
+            QueueCmd::Add {
+                prompt,
+                project,
+                file,
+                attempts,
+            } => {
+                let tasks = match (prompt, file) {
+                    (Some(p), None) => vec![p],
+                    (None, Some(f)) => {
+                        let text = std::fs::read_to_string(&f)
+                            .with_context(|| format!("reading {}", f.display()))?;
+                        queue::from_markdown(&text)
+                    }
+                    (Some(_), Some(_)) => bail!("give a task or --file, not both"),
+                    (None, None) => bail!("give a task, or --file tasks.md"),
+                };
+                if tasks.is_empty() {
+                    bail!("no open \"- [ ]\" items in that file");
+                }
+                for t in &tasks {
+                    print_reply(&ctl_started(&[
+                        "queue-add".into(),
+                        project.clone().unwrap_or_default(),
+                        attempts.to_string(),
+                        t.clone(),
+                    ])?)?;
+                }
+                Ok(())
+            }
+            QueueCmd::Ls => {
+                print!("{}", ipc::ctl(&paths::sock(), &["queue-ls".into()])?);
+                Ok(())
+            }
+        },
         Some(Cmd::Ls) => {
             let out = match ipc::ctl(&paths::sock(), &["ls".into()]) {
                 Ok(s) => s,

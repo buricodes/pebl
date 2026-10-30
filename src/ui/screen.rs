@@ -670,6 +670,139 @@ mod tests {
         insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
     }
 
+    fn queue_view(input: Option<(String, u8)>) -> QueueView {
+        use crate::model::TaskState::*;
+        let row = |state, title: &str, attempts, detail: &str, age: &str| QueueRow {
+            state,
+            title: title.into(),
+            attempts,
+            detail: detail.into(),
+            age: age.into(),
+        };
+        QueueView {
+            project: "nova-api".into(),
+            rows: vec![
+                row(
+                    Review,
+                    "Fix the rota export for night shifts",
+                    1,
+                    "ready · test, lint passed",
+                    "3m",
+                ),
+                row(
+                    Running,
+                    "Speed up the dashboard query",
+                    3,
+                    "1 of 3 attempts done",
+                    "12m",
+                ),
+                row(Failed, "Upgrade Prisma to v7", 1, "typecheck failed", "20m"),
+                row(
+                    Pending,
+                    "Add CSV download to reports",
+                    1,
+                    "waiting · #1 in line",
+                    "25m",
+                ),
+                row(Done, "Rename staff roles", 1, "merged or closed", "1h"),
+            ],
+            sel: 0,
+            more: 0,
+            limit: 2,
+            input,
+            confirm: false,
+        }
+    }
+
+    #[test]
+    fn queue_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Queue(queue_view(None));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn queue_strip_minimum_adding() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Queue(queue_view(Some(("Make the export 10x faster".into(), 3))));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    fn compare_view() -> CompareView {
+        let row =
+            |name: &str, status, check, files, adds, dels, tokens: &str, time: &str| CompareRow {
+                name: name.into(),
+                status,
+                check,
+                files,
+                adds,
+                dels,
+                tokens: tokens.into(),
+                time: time.into(),
+            };
+        CompareView {
+            title: "Speed up the dashboard query".into(),
+            rows: vec![
+                row(
+                    "speed-up-the-dashboard-t4-1",
+                    Status::Idle,
+                    Some(CheckBadge::Passed),
+                    3,
+                    48,
+                    12,
+                    "182k",
+                    "6m",
+                ),
+                row(
+                    "speed-up-the-dashboard-t4-2",
+                    Status::Idle,
+                    Some(CheckBadge::Failed),
+                    5,
+                    130,
+                    40,
+                    "240k",
+                    "9m",
+                ),
+                row(
+                    "speed-up-the-dashboard-t4-3",
+                    Status::Idle,
+                    Some(CheckBadge::Passed),
+                    2,
+                    21,
+                    30,
+                    "95k",
+                    "4m",
+                ),
+            ],
+            sel: 2,
+            confirm: true,
+        }
+    }
+
+    #[test]
+    fn compare_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Compare(compare_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn compare_strip_minimum() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Compare(compare_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
     #[test]
     fn inbox_strip() {
         let t = transcript();

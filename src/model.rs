@@ -53,7 +53,53 @@ pub struct State {
     #[serde(default)]
     pub sessions: Vec<Session>,
     #[serde(default)]
+    pub tasks: Vec<Task>,
+    #[serde(default)]
     pub next_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskState {
+    Pending,
+    Running,
+    Review,
+    Done,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub project: String,
+    pub title: String,
+    pub prompt: String,
+    pub attempts: u8,
+    pub state: TaskState,
+    #[serde(default)]
+    pub sessions: Vec<String>,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub runs: u32,
+    pub created: u64,
+    #[serde(default)]
+    pub started: Option<u64>,
+    #[serde(default)]
+    pub ended: Option<u64>,
+}
+
+impl Task {
+    pub fn title_of(prompt: &str) -> String {
+        let line = prompt
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("task");
+        let line = line.trim_start_matches(['-', '*', '#', ' ']);
+        let line = line.strip_prefix("[ ]").unwrap_or(line).trim();
+        line.chars().take(60).collect()
+    }
 }
 
 fn yes() -> bool {
@@ -119,6 +165,29 @@ impl State {
         let p = self.projects.remove(i);
         self.projects.insert(j, p);
         true
+    }
+
+    pub fn add_task(&mut self, project: &str, prompt: &str, attempts: u8) -> String {
+        let id = self.fresh_id("t");
+        self.tasks.push(Task {
+            id: id.clone(),
+            project: project.into(),
+            title: Task::title_of(prompt),
+            prompt: prompt.trim().into(),
+            attempts: attempts.clamp(1, 4),
+            state: TaskState::Pending,
+            sessions: Vec::new(),
+            note: String::new(),
+            runs: 0,
+            created: now(),
+            started: None,
+            ended: None,
+        });
+        id
+    }
+
+    pub fn task_mut(&mut self, id: &str) -> Option<&mut Task> {
+        self.tasks.iter_mut().find(|t| t.id == id)
     }
 
     pub fn set_status(&mut self, sid: &str, status: Status) -> bool {
@@ -204,6 +273,20 @@ mod tests {
         assert_eq!(age(120), "2m");
         assert_eq!(age(3700), "1h");
         assert_eq!(age(3 * 86400), "3d");
+    }
+
+    #[test]
+    fn task_titles_come_from_the_first_line() {
+        assert_eq!(
+            Task::title_of("\n- [ ] Fix the rota export\nmore"),
+            "Fix the rota export"
+        );
+        assert_eq!(Task::title_of("## Add dark mode"), "Add dark mode");
+        assert_eq!(Task::title_of("   "), "task");
+        let mut st = State::default();
+        let id = st.add_task("p1", " do it ", 9);
+        assert_eq!(st.tasks[0].attempts, 4);
+        assert_eq!(st.task_mut(&id).unwrap().prompt, "do it");
     }
 
     #[test]

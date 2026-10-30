@@ -1,8 +1,9 @@
 use super::theme::Tok;
 use super::{keys, len, seg, seg_len, segb, Painter, Seg};
+use crate::model::TaskState;
 use crate::view::{
-    Broadcast, Clip, Finish, InboxView, Layout, Mode, NameFrom, NewProject, NoticeKind, Peek,
-    PromptStep, PromptsView, SearchView, View,
+    Broadcast, CheckBadge, Clip, CompareView, Finish, InboxView, Layout, Mode, NameFrom,
+    NewProject, NoticeKind, Peek, PromptStep, PromptsView, QueueView, SearchView, View,
 };
 
 fn shell_line(v: &View) -> bool {
@@ -21,6 +22,8 @@ pub fn height(v: &View) -> u16 {
         Mode::Peek(pk) => pk.lines.len() as u16 + 5,
         Mode::Broadcast(b) => broadcast_rows(b) as u16 + 2,
         Mode::Inbox(iv) => inbox_rows(iv) as u16 + 3,
+        Mode::Queue(qv) => queue_rows(qv) as u16 + 3,
+        Mode::Compare(cv) => cv.rows.len().max(1) as u16 + 4 + u16::from(cv.confirm),
         Mode::Search(_) | Mode::Prompts(_) if v.layout.short_keys() => 10,
         Mode::Search(_) | Mode::Prompts(_) => 12,
         Mode::Finish(f) => finish_rows(f, v.flash.as_deref()).len() as u16 + 2,
@@ -52,6 +55,20 @@ pub fn render(v: &View, p: &mut Painter) {
     }
     if let Mode::Broadcast(b) = &v.mode {
         broadcast(b, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Queue(qv) = &v.mode {
+        queue(qv, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Compare(cv) = &v.mode {
+        compare(cv, p);
         if h >= 2 {
             let w = p.w();
             p.hl(0, h - 2, w);
@@ -310,6 +327,192 @@ fn snippet(text: &str, q: &str, w: usize, sel: bool) -> Vec<Seg> {
         post = super::fit(&post, room);
     }
     vec![seg(pre, base), segb(m, Tok::Acc), seg(post, base)]
+}
+
+fn queue_rows(qv: &QueueView) -> usize {
+    usize::from(qv.input.is_some())
+        + qv.rows.len().max(1)
+        + usize::from(qv.more > 0)
+        + usize::from(qv.confirm)
+}
+
+fn queue(qv: &QueueView, p: &mut Painter) {
+    let w = p.w();
+    p.segs(
+        1,
+        0,
+        &[
+            segb("Queue", Tok::Fg),
+            seg(format!(" · {}", qv.project), Tok::Mute),
+        ],
+    );
+    p.rt(
+        w - 1,
+        0,
+        &format!("runs {} at a time, each in its own worktree", qv.limit),
+        Tok::Dim,
+        false,
+    );
+    let mut y = 1;
+    if let Some((text, attempts)) = &qv.input {
+        let tag = match attempts {
+            1 => "1 attempt".to_string(),
+            n => format!("best of {n}"),
+        };
+        let room = (w - 3 - 9 - len(&tag) as i32 - 3).max(1) as usize;
+        let e = p.segs(
+            3,
+            y,
+            &[
+                segb("new task ", Tok::Acc),
+                seg(super::fit_tail(text, room), Tok::Fg),
+            ],
+        );
+        p.caret(e, y);
+        p.rt(
+            w - 1,
+            y,
+            &tag,
+            if *attempts > 1 { Tok::Acc } else { Tok::Dim },
+            *attempts > 1,
+        );
+        y += 1;
+    }
+    if qv.rows.is_empty() {
+        p.t(
+            3,
+            y,
+            &super::fit(
+                "No tasks yet. a adds one: pebl starts it in a fresh worktree as soon as a slot is free.",
+                (w - 4).max(1) as usize,
+            ),
+            Tok::Mute,
+            false,
+        );
+        return;
+    }
+    let title_w = if w >= 100 { 40 } else { 26 };
+    for (i, r) in qv.rows.iter().enumerate() {
+        let yy = y + i as i32;
+        let sel = i == qv.sel;
+        if sel {
+            p.bg(0, yy, w, Tok::Sel);
+            p.t(1, yy, "›", Tok::Acc, true);
+        }
+        let (g, tok, bold) = match r.state {
+            TaskState::Pending => ("○", Tok::Mute, false),
+            TaskState::Running => ("●", Tok::Ok, false),
+            TaskState::Review => ("◆", Tok::Acc, true),
+            TaskState::Done => ("✓", Tok::Dim, false),
+            TaskState::Failed => ("✕", Tok::Err, false),
+        };
+        p.t(3, yy, g, tok, bold);
+        let best = if r.attempts > 1 {
+            format!(" ×{}", r.attempts)
+        } else {
+            String::new()
+        };
+        let e = p.t(
+            5,
+            yy,
+            &super::fit(&r.title, (title_w - 1 - len(&best) as i32).max(4) as usize),
+            if r.state == TaskState::Done {
+                Tok::Mute
+            } else {
+                Tok::Fg
+            },
+            sel,
+        );
+        p.t(e, yy, &best, Tok::Dim, false);
+        let dx = 5 + title_w;
+        let room = (w - dx - len(&r.age) as i32 - 3).max(4) as usize;
+        let dtok = match r.state {
+            TaskState::Review => Tok::Acc,
+            TaskState::Failed => Tok::Err,
+            _ => Tok::Mute,
+        };
+        p.t(dx, yy, &super::fit(&r.detail, room), dtok, false);
+        p.rt(w - 1, yy, &r.age, Tok::Dim, false);
+    }
+    let mut y = y + qv.rows.len() as i32;
+    if qv.more > 0 {
+        p.t(5, y, &format!("+ {} more", qv.more), Tok::Dim, false);
+        y += 1;
+    }
+    if qv.confirm {
+        p.t(
+            3,
+            y,
+            "x again discards its sessions and their worktrees",
+            Tok::Err,
+            true,
+        );
+    }
+}
+
+fn compare(cv: &CompareView, p: &mut Painter) {
+    let w = p.w();
+    let room = (w - 30).max(4) as usize;
+    p.segs(
+        1,
+        0,
+        &[
+            segb("Compare", Tok::Fg),
+            seg(format!(" · {}", super::fit(&cv.title, room)), Tok::Mute),
+        ],
+    );
+    let cols: [(&str, i32); 6] = [
+        ("checks", 0),
+        ("files", 8),
+        ("added", 15),
+        ("removed", 23),
+        ("tokens", 33),
+        ("time", 42),
+    ];
+    let x0 = (w - 48).max(28);
+    p.t(3, 1, "attempt", Tok::Dim, false);
+    for (label, dx) in cols {
+        p.t(x0 + dx, 1, label, Tok::Dim, false);
+    }
+    for (i, r) in cv.rows.iter().enumerate() {
+        let y = 2 + i as i32;
+        let sel = i == cv.sel;
+        if sel {
+            p.bg(0, y, w, Tok::Sel);
+            p.t(1, y, "›", Tok::Acc, true);
+        }
+        let (g, gt, gb) = super::glyph(r.status);
+        p.t(3, y, g, gt, gb);
+        p.t(
+            5,
+            y,
+            &super::fit_tail(&r.name, (x0 - 7).max(4) as usize),
+            Tok::Fg,
+            sel,
+        );
+        let (c, ct) = match r.check {
+            Some(CheckBadge::Passed) => ("✓", Tok::Ok),
+            Some(CheckBadge::Failed) => ("✕", Tok::Err),
+            Some(CheckBadge::Running) => ("…", Tok::Dim),
+            None => ("–", Tok::Dim),
+        };
+        p.t(x0 + 2, y, c, ct, false);
+        p.t(x0 + 8, y, &r.files.to_string(), Tok::Fg, false);
+        p.t(x0 + 15, y, &format!("+{}", r.adds), Tok::Ok, false);
+        p.t(x0 + 23, y, &format!("−{}", r.dels), Tok::Err, false);
+        p.t(x0 + 33, y, &r.tokens, Tok::Mute, false);
+        p.t(x0 + 42, y, &r.time, Tok::Mute, false);
+    }
+    if cv.confirm {
+        let name = cv.rows.get(cv.sel).map(|r| r.name.as_str()).unwrap_or("");
+        p.t(
+            3,
+            2 + cv.rows.len() as i32,
+            &format!("w again keeps {name} and discards the other attempts"),
+            Tok::Acc,
+            true,
+        );
+    }
 }
 
 fn inbox_rows(iv: &InboxView) -> usize {
@@ -862,6 +1065,25 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 ("ctrl+u", "clear"),
             ])
         }
+        Mode::Queue(qv) if qv.input.is_some() => {
+            keys(&[("enter", "add"), ("tab", "attempts"), ("esc", "cancel")])
+        }
+        Mode::Queue(_) if short => keys(&[("a", "add"), ("enter", "open"), ("esc", "close")]),
+        Mode::Queue(_) => keys(&[
+            ("a", "add"),
+            ("enter", "open"),
+            ("d", "diff"),
+            ("D", "done"),
+            ("r", "retry"),
+            ("x", "remove"),
+            ("esc", "close"),
+        ]),
+        Mode::Compare(_) => keys(&[
+            ("enter", "open"),
+            ("d", "diff"),
+            ("w", "pick winner"),
+            ("esc", "back"),
+        ]),
         Mode::Inbox(iv) if iv.rows.is_empty() => keys(&[("esc", "close")]),
         Mode::Inbox(_) if short => keys(&[("enter", "open"), ("p", "peek"), ("esc", "close")]),
         Mode::Inbox(_) => keys(&[

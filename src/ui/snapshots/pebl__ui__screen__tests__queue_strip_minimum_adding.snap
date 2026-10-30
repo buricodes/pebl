@@ -1,0 +1,29 @@
+---
+source: src/ui/screen.rs
+assertion_line: 733
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │
+   ◆ migrate-staging  │ > refactor the auth middleware to use the new session st
+   ○ docs-pass        │
+                      │ ● Update(src/middleware/auth.ts)
+ ▾ billing-svc      3 │   ⎿  Updated src/middleware/auth.ts with 3 additions
+   ● onboarding-flow  │
+   ✕ e2e-tests        │ ✻ Refactoring… (47s · esc to interrupt)
+   ○ a11y-audit       │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ Queue · nova-api                    runs 2 at a time, each in its own worktree
+   new task Make the export 10x faster                                best of 3
+ › ◆ Fix the rota export for … ready · test, lint passed                     3m
+   ● Speed up the dashboar… ×3 1 of 3 attempts done                         12m
+   ✕ Upgrade Prisma to v7      typecheck failed                             20m
+   ○ Add CSV download to repo… waiting · #1 in line                         25m
+   ✓ Rename staff roles        merged or closed                              1h
+────────────────────────────────────────────────────────────────────────────────
+ enter add · tab attempts · esc cancel                            ◆ 1  4 active

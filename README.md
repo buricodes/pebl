@@ -91,7 +91,7 @@ The first time, press **enter** to add the current folder and start a session. p
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
 
-With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
+With the sidebar focused: `j`/`k` move, `enter` opens (or resumes an exited session), `space` folds a project, `J`/`K` (or `shift+↓/↑`) move a project down or up, `p` peeks, `d` reviews, `t` sends failing checks to Claude, `T` runs checks now, `f` finishes a worktree, `r` renames, `x` kills, `w` starts a session in a new git worktree, `e` opens the folder in VS Code, `q` opens the task queue, `N` adds a project note, `m` mutes the mascot and bell, `/` filters, `?` shows all shortcuts.
 
 ### Peek and quick reply
 
@@ -128,6 +128,28 @@ auto_fix = 0      # send failures back to Claude on their own, up to this many t
 ```
 
 The sidebar shows `…` while they run, then `✓` or `✕` next to the session. Runs are skipped when no files changed since the last one, so turns that only answer questions cost nothing. When a check fails, `t` sends Claude the failing commands with the end of their output and asks it to fix them; `T` runs the checks again now. With `auto_fix = 2`, pebl sends failures back by itself up to twice, and the count resets when you send the next prompt yourself. Each command has 10 minutes.
+
+### Task queue and best of N
+
+`q` in the sidebar opens the selected project's queue. `a` adds a task (type it, `enter`); pebl starts it in a fresh git worktree session as soon as a slot is free, without switching your screen. When its turn ends and the project's checks pass, it moves to "needs review" and the next task starts. Two run at a time by default:
+
+```toml
+[queue]
+max_parallel = 3
+```
+
+In the queue, `enter` opens a task's session, `d` reviews its diff, `D` marks it done, `r` retries a failed one in a new worktree, `x` removes it (twice for a running task: that discards its sessions and worktrees). Merging it with `f`, or closing its session, marks the task done.
+
+**Best of N:** while typing a task, `tab` sets how many attempts to run (up to 4). Each gets its own worktree. When they're done, `enter` on the task opens a compare view with each attempt's checks, files changed, lines added and removed, tokens and time; `d` shows an attempt's diff, `enter` opens it, and `w` twice keeps it and discards the others.
+
+From the command line:
+
+```sh
+pebl queue add "Fix the rota export for night shifts"
+pebl queue add --attempts 3 "Make the dashboard query faster"
+pebl queue add --file tasks.md        # every open "- [ ]" item; indented lines below one join its prompt
+pebl queue ls
+```
 
 ### Project notes
 

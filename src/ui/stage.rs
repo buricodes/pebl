@@ -204,7 +204,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("t · T", "send failing checks to Claude · run checks"),
             ("r · x", "rename · kill"),
             ("e", "open the folder in your editor"),
-            ("/", "filter"),
+            ("q · /", "task queue · filter"),
             ("N · m", "add a project note · mute alerts"),
         ],
     ),

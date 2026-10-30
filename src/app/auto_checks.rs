@@ -14,6 +14,14 @@ pub(super) enum Report {
     Unchanged,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Progress {
+    Unchecked,
+    Busy,
+    Passed,
+    Failed,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct CheckState {
     running: bool,
@@ -148,6 +156,21 @@ impl<B: SessionBackend + UiBackend> App<B> {
         self.start_checks(sid, true);
         self.flash("running checks…");
         Ok(())
+    }
+
+    pub(super) fn check_progress(&self, sid: &str) -> Progress {
+        match self.checks.get(sid) {
+            Some(c) if c.running || c.auto_sent => Progress::Busy,
+            Some(c) if c.outcomes.is_empty() => Progress::Unchecked,
+            Some(c) if c.outcomes.iter().all(Outcome::passed) => Progress::Passed,
+            Some(_) => Progress::Failed,
+            None => Progress::Unchecked,
+        }
+    }
+
+    pub(super) fn check_summary(&self, sid: &str) -> Option<String> {
+        let c = self.checks.get(sid)?;
+        (!c.outcomes.is_empty()).then(|| checks::summary(&c.outcomes))
     }
 
     pub(super) fn check_badge(&self, sid: &str) -> Option<CheckBadge> {
