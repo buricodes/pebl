@@ -625,6 +625,11 @@ fn doctor() -> Result<()> {
         println!("  · hooks  written on first launch");
     }
     println!("  · hotkey  {}", hotkey::status());
+    if std::env::var("TERM_PROGRAM").as_deref() == Ok("Apple_Terminal") {
+        println!("  · new line  Terminal.app sends shift+enter as plain enter: type \\ then enter, or option+enter with Option as Meta on");
+    } else {
+        println!("  · new line  shift+enter, or \\ then enter");
+    }
     match update::check_now() {
         Some(latest) if update::is_newer(&latest, update::current()) => println!(
             "  · version  {} (pebl {latest} is out: run `pebl update`)",

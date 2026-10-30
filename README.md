@@ -206,6 +206,8 @@ shell = "C-t"         # Claude Code uses ctrl+t to show its task list; rebind if
 
 The defaults follow the design and override some Claude Code shortcuts while pebl is open: `ctrl+b` (background a bash command), `ctrl+o` (transcript), `ctrl+g` (open the prompt in your editor), and `ctrl+j` (newline). While columns are open, `ctrl+w` closes a column instead of deleting a word. Rebind any of these if you rely on them. On macOS, `ctrl+space` may also be the input-source switch.
 
+For a new line in Claude's prompt, `shift+enter` works in terminals that send it (Warp, iTerm2, Ghostty, Kitty, WezTerm), and pebl passes it through to Claude. macOS Terminal.app sends it as a plain `enter`, so there use `\` then `enter`, or `option+enter` with "Use Option as Meta key" on. `pebl doctor` tells you which applies.
+
 ## How it works
 
 pebl runs its own tmux server (`tmux -L pebl`, separate from yours). The sidebar, stage, and status bar are small pebl panes driven by a daemon, and each Claude Code session lives in its own hidden tmux session that gets swapped into the main pane. Sessions therefore survive closing the terminal. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
