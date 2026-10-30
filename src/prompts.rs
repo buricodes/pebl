@@ -4,8 +4,16 @@ use std::process::Command;
 
 pub const CLIPBOARD: &str = "{{clipboard}}";
 
-const STARTER_NAME: &str = "investigate ticket";
-const STARTER: &str = "Investigate this ticket before changing any code. Read the code it touches, explain the likely cause, and propose a plan. Wait for my go-ahead before editing anything.\n\n{{clipboard}}\n";
+const STARTERS: [(&str, &str); 2] = [
+    (
+        "investigate ticket",
+        "Investigate this ticket before changing any code. Read the code it touches, explain the likely cause, and propose a plan. Wait for my go-ahead before editing anything.\n\n{{clipboard}}\n",
+    ),
+    (
+        "plan into tasks",
+        "Break this goal into small tasks that separate agents can do in parallel, each in its own git worktree. Read the code first. Don't change any files.\n\nReply with a Markdown checklist, one `- [ ]` item per task. Put the title on the item line and indent the details under it: which files, what done looks like, and how to test it. Make each task stand on its own.\n\nThe goal:\n\n{{clipboard}}\n",
+    ),
+];
 const BLANK: &str = "Write your prompt here. Put {{clipboard}} where pasted text should go, or delete it.\n\n{{clipboard}}\n";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,8 +59,12 @@ impl Prompt {
 }
 
 pub fn load(dir: &Path) -> Vec<Prompt> {
-    if !dir.exists() && create(dir, STARTER_NAME, STARTER).is_err() {
-        return Vec::new();
+    if !dir.exists() {
+        for (name, text) in STARTERS {
+            if create(dir, name, text).is_err() {
+                return Vec::new();
+            }
+        }
     }
     let mut out: Vec<Prompt> = std::fs::read_dir(dir)
         .into_iter()
@@ -159,18 +171,23 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("prompts");
         let seeded = load(&dir);
-        assert_eq!(seeded.len(), 1);
-        assert!(seeded[0].uses_clipboard());
+        assert_eq!(seeded.len(), 2);
+        assert!(seeded.iter().all(|p| p.uses_clipboard()));
         create(&dir, "Write Tests!", "Write tests for this.").unwrap();
         let again = create(&dir, "write tests", "Again.").unwrap();
         assert!(again.ends_with("write-tests-2.md"));
         let names: Vec<String> = load(&dir).into_iter().map(|p| p.name).collect();
         assert_eq!(
             names,
-            vec!["investigate ticket", "write tests", "write tests 2"]
+            vec![
+                "investigate ticket",
+                "plan into tasks",
+                "write tests",
+                "write tests 2"
+            ]
         );
         std::fs::remove_file(dir.join("investigate-ticket.md")).unwrap();
-        assert_eq!(load(&dir).len(), 2);
+        assert_eq!(load(&dir).len(), 3);
         assert!(create(&dir, " !! ", "x").is_err());
     }
 }

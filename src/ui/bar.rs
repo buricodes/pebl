@@ -3,7 +3,7 @@ use super::{keys, len, seg, seg_len, segb, Painter, Seg};
 use crate::model::TaskState;
 use crate::view::{
     Broadcast, CheckBadge, Clip, CompareView, Finish, InboxView, Layout, Mode, NameFrom,
-    NewProject, NoticeKind, Peek, PromptStep, PromptsView, QueueView, SearchView, View,
+    NewProject, NoticeKind, Peek, PlanView, PromptStep, PromptsView, QueueView, SearchView, View,
 };
 
 fn shell_line(v: &View) -> bool {
@@ -23,6 +23,7 @@ pub fn height(v: &View) -> u16 {
         Mode::Broadcast(b) => broadcast_rows(b) as u16 + 2,
         Mode::Inbox(iv) => inbox_rows(iv) as u16 + 3,
         Mode::Queue(qv) => queue_rows(qv) as u16 + 3,
+        Mode::Plan(pv) => pv.rows.len() as u16 + u16::from(pv.more > 0) + 3,
         Mode::Compare(cv) => cv.rows.len().max(1) as u16 + 4 + u16::from(cv.confirm),
         Mode::Search(_) | Mode::Prompts(_) if v.layout.short_keys() => 10,
         Mode::Search(_) | Mode::Prompts(_) => 12,
@@ -55,6 +56,13 @@ pub fn render(v: &View, p: &mut Painter) {
     }
     if let Mode::Broadcast(b) = &v.mode {
         broadcast(b, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Plan(pv) = &v.mode {
+        plan(pv, p);
         if h >= 2 {
             let w = p.w();
             p.hl(0, h - 2, w);
@@ -327,6 +335,55 @@ fn snippet(text: &str, q: &str, w: usize, sel: bool) -> Vec<Seg> {
         post = super::fit(&post, room);
     }
     vec![seg(pre, base), segb(m, Tok::Acc), seg(post, base)]
+}
+
+fn plan(pv: &PlanView, p: &mut Painter) {
+    let w = p.w();
+    p.segs(
+        1,
+        0,
+        &[
+            segb("Plan", Tok::Fg),
+            seg(format!(" · from {}", pv.session), Tok::Mute),
+        ],
+    );
+    p.rt(
+        w - 1,
+        0,
+        &format!("{} of {} ticked", pv.picked, pv.total),
+        Tok::Dim,
+        false,
+    );
+    for (i, (title, on)) in pv.rows.iter().enumerate() {
+        let y = 1 + i as i32;
+        let sel = i == pv.sel;
+        if sel {
+            p.bg(0, y, w, Tok::Sel);
+            p.t(1, y, "›", Tok::Acc, true);
+        }
+        let (mark, tok) = if *on {
+            ("[x]", Tok::Acc)
+        } else {
+            ("[ ]", Tok::Dim)
+        };
+        p.t(3, y, mark, tok, *on);
+        p.t(
+            7,
+            y,
+            &super::fit(title, (w - 8).max(4) as usize),
+            if *on { Tok::Fg } else { Tok::Mute },
+            sel,
+        );
+    }
+    if pv.more > 0 {
+        p.t(
+            7,
+            1 + pv.rows.len() as i32,
+            &format!("+ {} more", pv.more),
+            Tok::Dim,
+            false,
+        );
+    }
 }
 
 fn queue_rows(qv: &QueueView) -> usize {
@@ -1063,6 +1120,15 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 ("enter", send.as_str()),
                 ("esc", "back to marking"),
                 ("ctrl+u", "clear"),
+            ])
+        }
+        Mode::Plan(pv) => {
+            let n = format!("queue {}", pv.picked);
+            keys(&[
+                ("space", "tick"),
+                ("a", "all"),
+                ("enter", n.as_str()),
+                ("esc", "cancel"),
             ])
         }
         Mode::Queue(qv) if qv.input.is_some() => {

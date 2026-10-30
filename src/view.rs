@@ -237,6 +237,7 @@ pub enum Mode {
     Prompts(PromptsView),
     Inbox(InboxView),
     Queue(QueueView),
+    Plan(PlanView),
     Compare(CompareView),
     Note {
         project: String,
@@ -276,6 +277,16 @@ pub struct SearchView {
     pub project: String,
     pub projects: usize,
     pub indexing: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlanView {
+    pub session: String,
+    pub rows: Vec<(String, bool)>,
+    pub sel: usize,
+    pub more: usize,
+    pub picked: usize,
+    pub total: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

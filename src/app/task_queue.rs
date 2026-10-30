@@ -3,7 +3,7 @@ use super::{edit, App, CurRef, IMode};
 use crate::backend::{SessionBackend, UiBackend};
 use crate::ipc::{Key, KeyCode};
 use crate::model::{age, now, short_count, Status, Task, TaskState};
-use crate::view::{CompareRow, CompareView, Focus, QueueRow, QueueView};
+use crate::view::{CompareRow, CompareView, Focus, PlanView, QueueRow, QueueView};
 use crate::{git, queue};
 use anyhow::{anyhow, bail, Result};
 
@@ -494,6 +494,113 @@ impl<B: SessionBackend + UiBackend> App<B> {
             "kept {name}, discarded the other attempts · f finishes it"
         ));
         Ok(())
+    }
+
+    pub(super) fn start_plan(&mut self, sid: &str) -> Result<()> {
+        self.follow_tokens();
+        let text = self
+            .tokens
+            .get(sid)
+            .map(|(_, _, t)| t.last_text.clone())
+            .unwrap_or_default();
+        let tasks = queue::from_markdown(&text);
+        if tasks.is_empty() {
+            bail!("its last reply has no \"- [ ]\" checklist; ask it to plan as one (ctrl+p, plan into tasks)");
+        }
+        self.cancel_mode();
+        self.mode = IMode::Plan {
+            sid: sid.to_string(),
+            tasks: tasks.into_iter().map(|t| (t, true)).collect(),
+            sel: 0,
+        };
+        self.apply_layout();
+        self.set_focus(Focus::Bar);
+        Ok(())
+    }
+
+    pub(super) fn plan_key(
+        &mut self,
+        sid: String,
+        mut tasks: Vec<(String, bool)>,
+        mut sel: usize,
+        k: Key,
+    ) -> Result<()> {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.cancel_mode();
+                self.set_focus(Focus::Sidebar);
+                return Ok(());
+            }
+            KeyCode::Up | KeyCode::Char('k') => sel = sel.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                sel = (sel + 1).min(tasks.len().saturating_sub(1))
+            }
+            KeyCode::Char(' ') => {
+                if let Some(t) = tasks.get_mut(sel) {
+                    t.1 = !t.1;
+                }
+            }
+            KeyCode::Char('a') => {
+                let all = tasks.iter().all(|t| t.1);
+                tasks.iter_mut().for_each(|t| t.1 = !all);
+            }
+            KeyCode::Enter => {
+                let pid = self
+                    .st
+                    .session(&sid)
+                    .map(|s| s.project.clone())
+                    .ok_or_else(|| anyhow!("that session is gone"))?;
+                let picked: Vec<String> =
+                    tasks.iter().filter(|t| t.1).map(|t| t.0.clone()).collect();
+                if picked.is_empty() {
+                    self.mode = IMode::Plan { sid, tasks, sel };
+                    bail!("tick at least one task with space");
+                }
+                for t in &picked {
+                    self.mode = IMode::Plan {
+                        sid: sid.clone(),
+                        tasks: tasks.clone(),
+                        sel,
+                    };
+                    self.queue_add(&pid, t, 1)?;
+                }
+                self.run_queue();
+                self.cancel_mode();
+                self.mode = IMode::Queue {
+                    pid,
+                    sel: 0,
+                    input: None,
+                    confirm: false,
+                };
+                self.apply_layout();
+                self.flash(format!("queued {} tasks from the plan", picked.len()));
+                return Ok(());
+            }
+            _ => {}
+        }
+        self.mode = IMode::Plan { sid, tasks, sel };
+        Ok(())
+    }
+
+    pub(super) fn plan_view(&self, sid: &str, tasks: &[(String, bool)], sel: usize) -> PlanView {
+        let start = (sel + 1).saturating_sub(ROWS);
+        PlanView {
+            session: self
+                .st
+                .session(sid)
+                .map(|s| s.name.clone())
+                .unwrap_or_default(),
+            rows: tasks
+                .iter()
+                .skip(start)
+                .take(ROWS)
+                .map(|(t, on)| (Task::title_of(t), *on))
+                .collect(),
+            sel: sel - start,
+            more: tasks.len().saturating_sub(start + ROWS),
+            picked: tasks.iter().filter(|t| t.1).count(),
+            total: tasks.len(),
+        }
     }
 
     pub(super) fn queue_view(

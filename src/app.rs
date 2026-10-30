@@ -90,6 +90,11 @@ enum IMode {
         input: Option<(String, u8)>,
         confirm: bool,
     },
+    Plan {
+        sid: String,
+        tasks: Vec<(String, bool)>,
+        sel: usize,
+    },
     Compare {
         task: String,
         sel: usize,
@@ -1942,6 +1947,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 | IMode::Inbox { .. }
                 | IMode::Queue { .. }
                 | IMode::Compare { .. }
+                | IMode::Plan { .. }
         ) {
             self.mode = IMode::Normal;
             self.apply_layout();
@@ -2922,6 +2928,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
         {
             return self.queue_key(pid, sel, input, k);
         }
+        if let IMode::Plan { sid, tasks, sel } = self.mode.clone() {
+            return self.plan_key(sid, tasks, sel, k);
+        }
         if let IMode::Compare {
             task,
             sel,
@@ -2959,7 +2968,8 @@ impl<B: SessionBackend + UiBackend> App<B> {
             | IMode::Prompts(_)
             | IMode::Note { .. }
             | IMode::Queue { .. }
-            | IMode::Compare { .. } => Ok(()),
+            | IMode::Compare { .. }
+            | IMode::Plan { .. } => Ok(()),
             IMode::Inbox { sel } => self.inbox_key(sel, k),
             IMode::Search {
                 query,
@@ -3284,6 +3294,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             Char('N') => self.start_note()?,
             Char('q') => self.start_queue()?,
+            Char('P') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to the session that wrote the plan"),
+                };
+                self.start_plan(&sid)?;
+            }
             Char('t') | Char('T') => {
                 let sid = match &self.cursor {
                     Some(CurRef::Session(sid)) => sid.clone(),
@@ -3557,6 +3574,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 stats,
                 confirm,
             } => Mode::Compare(self.compare_view(task, *sel, stats, *confirm)),
+            IMode::Plan { sid, tasks, sel } => Mode::Plan(self.plan_view(sid, tasks, *sel)),
             IMode::Broadcast { marks, text } => {
                 let targets: Vec<crate::view::Target> = marks
                     .iter()
@@ -4424,7 +4442,7 @@ mod tests {
         let Mode::Prompts(pv) = a.view().mode else {
             panic!("picker closed")
         };
-        assert_eq!(pv.total, 2);
+        assert_eq!(pv.total, 3);
     }
 
     #[test]
@@ -4644,6 +4662,50 @@ mod tests {
         assert!(!wt.exists());
         let log = a.handle_ctl(&["queue-ls".into()]);
         assert!(log.contains("\tdone\tFix the rota export\t"), "{log}");
+    }
+
+    #[test]
+    fn a_plan_becomes_queued_tasks() {
+        let (mut a, d) = app();
+        git_repo(d.path());
+        std::fs::write(d.path().join("pebl.toml"), "[queue]\nmax_parallel = 1\n").unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "planner".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('P'));
+        assert!(a.view().flash.unwrap().contains("no \"- [ ]\" checklist"));
+        let reply = "Here's the plan:\n\n- [ ] Add a CSV export endpoint\n  in api/reports.ts\n- [ ] Add the download button\n- [ ] Write the e2e test\n";
+        a.tokens.insert(
+            sid.clone(),
+            (
+                d.path().join("none.jsonl"),
+                0,
+                history::Tokens {
+                    last_text: reply.into(),
+                    ..Default::default()
+                },
+            ),
+        );
+        key(&mut a, Role::Sidebar, KeyCode::Char('P'));
+        let Mode::Plan(pv) = a.view().mode else {
+            panic!("plan not open")
+        };
+        assert_eq!((pv.picked, pv.total), (3, 3));
+        assert_eq!(pv.rows[0].0, "Add a CSV export endpoint");
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char(' '));
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let prompts: Vec<&str> = a.st.tasks.iter().map(|t| t.prompt.as_str()).collect();
+        assert_eq!(
+            prompts,
+            vec![
+                "Add a CSV export endpoint\nin api/reports.ts",
+                "Write the e2e test"
+            ]
+        );
+        assert!(matches!(a.view().mode, Mode::Queue(_)));
+        assert_eq!(a.st.tasks[0].state, crate::model::TaskState::Running);
     }
 
     #[test]
