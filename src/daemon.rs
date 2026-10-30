@@ -69,6 +69,14 @@ pub fn run() -> Result<()> {
             std::thread::sleep(Duration::from_secs(60 * 60));
         });
     }
+    if crate::telemetry::enabled(cfg.telemetry) {
+        std::thread::spawn(|| loop {
+            if crate::telemetry::due() {
+                crate::telemetry::ping();
+            }
+            std::thread::sleep(Duration::from_secs(60 * 60));
+        });
+    }
     app.load_statuslines(&paths::statusline_dir());
     app.search_root = crate::search::root();
     app.start_index();
