@@ -117,6 +117,35 @@ When Claude's last reply contains a shell code block, the status bar offers `alt
 
 ### Checks after every turn
 
+Each time a session finishes a turn that changed files, pebl runs the project's own checks in the background, in that session's folder, and shows `…` while they run, then `✓` or `✕` next to the session. There's nothing to set up: pebl finds them itself.
+
+| Project has | pebl runs |
+|---|---|
+| `package.json` with `test`, `lint` or `typecheck` scripts | them, with npm, pnpm, yarn or bun (from the lockfile); skipped if `node_modules` is missing |
+| `Cargo.toml` | `cargo test --quiet` |
+| `go.mod` | `go test ./...` |
+| pytest config | `python -m pytest -q` |
+| a `Makefile` with a `test` target | `make test` |
+
+`pebl checks` (in a project folder) shows what pebl found. When a check fails, `t` on the session sends Claude the failing commands with the end of their output and asks it to fix them; `T` runs the checks again now. Each command has 10 minutes.
+
+To choose the checks yourself without touching the repo, put a `[checks]` table in the private settings file `pebl checks` prints (under `~/.pebl/projects/`), or in a `pebl.toml` in the repo to share it with your team:
+
+```toml
+[checks]
+test = "npm test"
+lint = "npx eslint src"
+auto_fix = 2      # send failures back to Claude by itself, up to twice per task
+```
+
+An empty `[checks]` table turns them off for that project; `checks = false` in `~/.pebl/config.toml` turns detection off everywhere.
+
+### Inbox
+
+`ctrl+y` lists every session that needs you, across all projects: waiting ones first (longest waiting at the top, with what they want, like `wants to run Bash`), then ones that stopped with an error, then ones that finished while you weren't looking. `enter` opens one, `p` peeks and answers it without switching, `x` dismisses an error or finished one, `esc` closes. Finished sessions drop off on their own once you've looked at them, or after 15 minutes. With two or more waiting, the status bar shows `ctrl+y list`.
+
+### Checks after every turn
+
 Add a `[checks]` table to the project's `pebl.toml` and pebl runs those commands in the background each time a session finishes a turn, in that session's folder (its worktree, if it has one):
 
 ```toml
@@ -153,7 +182,7 @@ pebl queue ls
 
 ### Agents working together
 
-**Reviewer.** `R` on a session starts a second Claude in the same folder that reads the first one's diff (and its task, if it came from the queue) without changing anything, then lists what it found. When it's done, `d` on the original session opens the review with those comments already on the right lines: edit or delete them, then `s` sends them back. Add this to `pebl.toml` to review every queued task automatically once its checks pass:
+**Reviewer.** `R` on a session starts a second Claude in the same folder that reads the first one's diff (and its task, if it came from the queue) without changing anything, then lists what it found. When it's done, `d` on the original session opens the review with those comments already on the right lines: edit or delete them, then `s` sends them back. Add this to the project's settings (its file under `~/.pebl/projects/`, or `pebl.toml`) to review every queued task automatically once its checks pass:
 
 ```toml
 [review]

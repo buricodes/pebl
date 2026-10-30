@@ -40,6 +40,7 @@ pub fn run() -> Result<()> {
         prompts: paths::prompts(),
         memory: paths::memory(),
         reviews: paths::reviews(),
+        detect_checks: cfg.checks.unwrap_or(true),
         clipboard: crate::prompts::clipboard,
         sock: sock.clone(),
         editor: crate::config::load(&paths::config())

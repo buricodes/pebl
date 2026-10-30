@@ -133,6 +133,7 @@ pub struct Env {
     pub prompts: PathBuf,
     pub memory: PathBuf,
     pub reviews: PathBuf,
+    pub detect_checks: bool,
     pub clipboard: fn() -> Option<String>,
     pub notify: crate::config::Notify,
 }
@@ -4117,6 +4118,7 @@ mod tests {
             prompts: std::env::temp_dir().join(format!("pebl-test-prompts-{}", std::process::id())),
             memory: std::env::temp_dir().join(format!("pebl-test-memory-{}", std::process::id())),
             reviews: std::env::temp_dir().join(format!("pebl-test-reviews-{}", std::process::id())),
+            detect_checks: true,
             clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
@@ -4868,6 +4870,27 @@ mod tests {
         assert!(losers.iter().all(|w| !w.exists()));
         assert!(wt.exists());
         assert_eq!(a.active.as_deref(), Some(sids[2].as_str()));
+    }
+
+    #[test]
+    fn detected_checks_run_without_any_config_unless_turned_off() {
+        use crate::view::CheckBadge;
+        let (mut a, d) = app();
+        std::fs::write(d.path().join("Makefile"), "test:\n\ttrue\n").unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        wait_for_badge(&mut a, CheckBadge::Passed);
+
+        a.env.detect_checks = false;
+        a.checks.clear();
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        a.tick();
+        assert_eq!(a.view().projects[0].sessions[0].check, None);
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('T'));
+        assert!(a.view().flash.unwrap().contains("no checks found"));
     }
 
     #[test]

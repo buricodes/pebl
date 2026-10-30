@@ -11,17 +11,7 @@ pub fn file_for(store: &Path, project: &Path) -> PathBuf {
     if shared.exists() {
         return shared;
     }
-    store.join(format!("{}.md", slug(project)))
-}
-
-fn slug(project: &Path) -> String {
-    project
-        .to_string_lossy()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
+    store.join(format!("{}.md", crate::project::slug(project)))
 }
 
 pub fn notes(file: &Path) -> usize {
@@ -77,7 +67,7 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         let file = file_for(&store, &repo);
         assert!(file.starts_with(&store));
-        assert!(file.ends_with(format!("{}.md", slug(&repo))));
+        assert!(file.ends_with(format!("{}.md", crate::project::slug(&repo))));
         assert!(!has_content(&file));
         std::fs::write(repo.join(REPO_FILE), "- shared\n").unwrap();
         assert_eq!(file_for(&store, &repo), repo.join(REPO_FILE));

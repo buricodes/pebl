@@ -58,7 +58,7 @@
 - [x] P2 `ctrl+g` cycles through what needs you, "all clear" when nothing does
 - [x] P2 Inbox (`ctrl+y`): waiting, errored and finished sessions across projects
 - [x] P2 Terminal bell and OSC 9 notifications, chosen per event
-- [x] P3 Auto-checks after each turn (`[checks]` in pebl.toml, `t` / `T`, `auto_fix`)
+- [x] P3 Auto-checks after each turn, detected from the project (`pebl checks`, `t` / `T`, `auto_fix`)
 - [x] P3 Project notes (`N`), given to every new session with `--append-system-prompt-file`
 - [ ] P3 Budgets (skipped for now: seat plan, no per-token cost)
 - [x] P4 Task queue (`q`, `pebl queue add`, tasks.md, `max_parallel`)

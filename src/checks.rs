@@ -37,17 +37,91 @@ impl Outcome {
     }
 }
 
-pub fn load(dirs: &[&Path]) -> Checks {
-    #[derive(serde::Deserialize, Default)]
-    struct File {
-        #[serde(default)]
-        checks: Checks,
+pub fn configured(dirs: &[&Path]) -> Option<(Checks, std::path::PathBuf)> {
+    crate::project::section(dirs, "checks")
+}
+
+pub fn detect(cwd: &Path) -> Checks {
+    let commands = js_checks(cwd).unwrap_or_else(|| {
+        let mut c = BTreeMap::new();
+        let test = if cwd.join("Cargo.toml").exists() {
+            Some("cargo test --quiet")
+        } else if cwd.join("go.mod").exists() {
+            Some("go test ./...")
+        } else if uses_pytest(cwd) {
+            Some("python -m pytest -q")
+        } else if has_make_target(cwd, "test") {
+            Some("make test")
+        } else {
+            None
+        };
+        if let Some(t) = test {
+            c.insert("test".to_string(), t.to_string());
+        }
+        c
+    });
+    Checks {
+        auto_fix: 0,
+        commands,
     }
-    dirs.iter()
-        .filter_map(|d| std::fs::read_to_string(d.join("pebl.toml")).ok())
-        .find_map(|s| toml::from_str::<File>(&s).ok())
-        .map(|f| f.checks)
-        .unwrap_or_default()
+}
+
+fn js_checks(cwd: &Path) -> Option<BTreeMap<String, String>> {
+    let text = std::fs::read_to_string(cwd.join("package.json")).ok()?;
+    let mut out = BTreeMap::new();
+    if !cwd.join("node_modules").is_dir() {
+        return Some(out);
+    }
+    let pkg: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let scripts = pkg.get("scripts").and_then(|s| s.as_object());
+    let has = |name: &str| {
+        scripts
+            .and_then(|s| s.get(name))
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| !v.contains("no test specified"))
+    };
+    let pm = [
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+    ]
+    .iter()
+    .find(|(lock, _)| cwd.join(lock).exists())
+    .map(|(_, pm)| *pm)
+    .unwrap_or("npm");
+    if has("test") {
+        let cmd = if pm == "bun" {
+            "bun run test".into()
+        } else {
+            format!("{pm} test")
+        };
+        out.insert("test".into(), cmd);
+    }
+    if has("lint") {
+        out.insert("lint".into(), format!("{pm} run lint"));
+    }
+    if let Some(name) = ["typecheck", "type-check", "check-types", "tsc"]
+        .into_iter()
+        .find(|n| has(n))
+    {
+        out.insert("typecheck".into(), format!("{pm} run {name}"));
+    }
+    Some(out)
+}
+
+fn uses_pytest(cwd: &Path) -> bool {
+    let pyproject = std::fs::read_to_string(cwd.join("pyproject.toml")).unwrap_or_default();
+    pyproject.contains("[tool.pytest")
+        || cwd.join("pytest.ini").exists()
+        || cwd.join("conftest.py").exists()
+        || cwd.join("tests/conftest.py").exists()
+}
+
+fn has_make_target(cwd: &Path, target: &str) -> bool {
+    std::fs::read_to_string(cwd.join("Makefile"))
+        .map(|m| m.lines().any(|l| l.starts_with(&format!("{target}:"))))
+        .unwrap_or(false)
 }
 
 pub fn fingerprint(cwd: &Path) -> Option<u64> {
@@ -184,6 +258,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn detects_checks_from_the_project_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        assert!(detect(d).is_empty());
+        std::fs::write(
+            d.join("package.json"),
+            r#"{"scripts":{"test":"node --test","lint":"eslint .","type-check":"tsc --noEmit","dev":"next"}}"#,
+        )
+        .unwrap();
+        std::fs::write(d.join("Makefile"), "test:\n\tmake-test\n").unwrap();
+        assert!(detect(d).is_empty());
+        std::fs::create_dir(d.join("node_modules")).unwrap();
+        std::fs::write(d.join("pnpm-lock.yaml"), "").unwrap();
+        let c = detect(d);
+        assert_eq!(c.commands["test"], "pnpm test");
+        assert_eq!(c.commands["lint"], "pnpm run lint");
+        assert_eq!(c.commands["typecheck"], "pnpm run type-check");
+        assert_eq!(c.commands.len(), 3);
+        std::fs::write(
+            d.join("package.json"),
+            r#"{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}"#,
+        )
+        .unwrap();
+        assert!(detect(d).is_empty());
+
+        let rust = tmp.path().join("rust");
+        std::fs::create_dir(&rust).unwrap();
+        std::fs::write(rust.join("Cargo.toml"), "[package]\n").unwrap();
+        assert_eq!(detect(&rust).commands["test"], "cargo test --quiet");
+        let make = tmp.path().join("make");
+        std::fs::create_dir(&make).unwrap();
+        std::fs::write(make.join("Makefile"), "build:\n\tcc\ntest: build\n\t./t\n").unwrap();
+        assert_eq!(detect(&make).commands["test"], "make test");
+    }
+
+    #[test]
     fn reads_checks_from_the_first_pebl_toml() {
         let tmp = tempfile::tempdir().unwrap();
         let (wt, repo) = (tmp.path().join("wt"), tmp.path().join("repo"));
@@ -194,10 +304,11 @@ mod tests {
             "[worktree]\ncopy = [\".env\"]\n\n[checks]\ntest = \"npm test\"\nlint = \"npm run lint\"\nauto_fix = 2\n",
         )
         .unwrap();
-        let c = load(&[&wt, &repo]);
+        let (c, from) = configured(&[&wt, &repo]).unwrap();
+        assert_eq!(from, repo.join("pebl.toml"));
         assert_eq!(c.auto_fix, 2);
         assert_eq!(c.commands.keys().collect::<Vec<_>>(), vec!["lint", "test"]);
-        assert!(load(&[&wt]).is_empty());
+        assert!(configured(&[&wt]).is_none());
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub struct Config {
     pub statusline: Option<bool>,
     pub update_check: Option<bool>,
     pub telemetry: Option<bool>,
+    pub checks: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

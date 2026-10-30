@@ -42,7 +42,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let Some(p) = project.as_deref() {
             dirs.push(p);
         }
-        checks::load(&dirs)
+        match checks::configured(&dirs) {
+            Some((c, _)) => c,
+            None if self.env.detect_checks => checks::detect(&s.cwd),
+            None => Checks::default(),
+        }
     }
 
     pub(super) fn turn_ended(&mut self, sid: &str) {
@@ -150,7 +154,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
     pub(super) fn run_checks_now(&mut self, sid: &str) -> Result<()> {
         if self.checks_for(sid).is_empty() {
             return Err(anyhow!(
-                "no checks for this project: add a [checks] table to pebl.toml"
+                "no checks found: no test or lint scripts here (pebl checks shows how to add some)"
             ));
         }
         self.start_checks(sid, true);

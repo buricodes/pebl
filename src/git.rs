@@ -94,15 +94,8 @@ pub struct WorktreeSetup {
 }
 
 pub fn setup_for(repo: &Path) -> WorktreeSetup {
-    #[derive(serde::Deserialize, Default)]
-    struct File {
-        #[serde(default)]
-        worktree: WorktreeSetup,
-    }
-    std::fs::read_to_string(repo.join("pebl.toml"))
-        .ok()
-        .and_then(|s| toml::from_str::<File>(&s).ok())
-        .map(|f| f.worktree)
+    crate::project::section(&[repo], "worktree")
+        .map(|(w, _)| w)
         .unwrap_or_default()
 }
 

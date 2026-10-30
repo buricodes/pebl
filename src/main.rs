@@ -15,6 +15,7 @@ mod memory;
 mod model;
 mod notify;
 mod paths;
+mod project;
 mod prompts;
 mod queue;
 mod review;
@@ -61,6 +62,13 @@ enum Cmd {
     },
     #[command(about = "List sessions with status (tab separated)")]
     Ls,
+    #[command(
+        about = "Show the checks pebl runs after each turn in a project, and where to change them"
+    )]
+    Checks {
+        #[arg(help = "Project folder (default: the current directory)")]
+        path: Option<std::path::PathBuf>,
+    },
     #[command(about = "Queue tasks that run in their own worktrees, a few at a time")]
     Queue {
         #[command(subcommand)]
@@ -207,6 +215,7 @@ fn run(cli: Cli) -> Result<()> {
             name.unwrap_or_default(),
             prompt.unwrap_or_default(),
         ])?),
+        Some(Cmd::Checks { path }) => show_checks(path),
         Some(Cmd::Queue { action }) => match action {
             QueueCmd::Add {
                 prompt,
@@ -369,6 +378,39 @@ pub fn self_exe() -> String {
         .and_then(std::fs::canonicalize)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "pebl".into())
+}
+
+fn show_checks(path: Option<std::path::PathBuf>) -> Result<()> {
+    let dir = match path {
+        Some(p) => p,
+        None => std::env::current_dir()?,
+    };
+    let dir = std::fs::canonicalize(&dir).with_context(|| format!("{}", dir.display()))?;
+    let private = project::private_file(&dir);
+    let off = config::load(&paths::config())?.checks == Some(false);
+    let (found, from) = match checks::configured(&[&dir]) {
+        Some((c, file)) => (c, format!("from {}", file.display())),
+        None if off => (
+            checks::Checks::default(),
+            "detection is off (checks = false in ~/.pebl/config.toml)".into(),
+        ),
+        None => (checks::detect(&dir), "detected from the project".into()),
+    };
+    println!("{}  {from}", model::tilde(&dir));
+    if found.is_empty() {
+        println!("  no checks: no test, lint or typecheck scripts found");
+    }
+    for (name, cmd) in &found.commands {
+        println!("  {name:<10} {cmd}");
+    }
+    if found.auto_fix > 0 {
+        println!("  auto_fix   {}", found.auto_fix);
+    }
+    println!(
+        "\nTo change them without touching the repo, put a [checks] table in\n  {}\nfor example:\n\n[checks]\ntest = \"npm test\"\nauto_fix = 0\n\nAn empty [checks] table turns them off for this project.",
+        private.display()
+    );
+    Ok(())
 }
 
 fn print_reply(s: &str) -> Result<()> {

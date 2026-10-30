@@ -3,38 +3,26 @@ use std::path::Path;
 
 pub const DEFAULT_PARALLEL: usize = 2;
 
+#[derive(serde::Deserialize)]
+struct QueueSettings {
+    max_parallel: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct ReviewSettings {
+    auto: Option<bool>,
+}
+
 pub fn max_parallel(project: &Path) -> usize {
-    #[derive(serde::Deserialize, Default)]
-    struct Queue {
-        max_parallel: Option<usize>,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct File {
-        #[serde(default)]
-        queue: Queue,
-    }
-    std::fs::read_to_string(project.join("pebl.toml"))
-        .ok()
-        .and_then(|s| toml::from_str::<File>(&s).ok())
-        .and_then(|f| f.queue.max_parallel)
+    crate::project::section::<QueueSettings>(&[project], "queue")
+        .and_then(|(q, _)| q.max_parallel)
         .unwrap_or(DEFAULT_PARALLEL)
         .clamp(1, 8)
 }
 
 pub fn auto_review(project: &Path) -> bool {
-    #[derive(serde::Deserialize, Default)]
-    struct Review {
-        auto: Option<bool>,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct File {
-        #[serde(default)]
-        review: Review,
-    }
-    std::fs::read_to_string(project.join("pebl.toml"))
-        .ok()
-        .and_then(|s| toml::from_str::<File>(&s).ok())
-        .and_then(|f| f.review.auto)
+    crate::project::section::<ReviewSettings>(&[project], "review")
+        .and_then(|(r, _)| r.auto)
         .unwrap_or(false)
 }
 
