@@ -132,10 +132,10 @@ fn run_loop(role: Role) -> Result<()> {
                 } else if m.row + 1 == h {
                     Some(Input::Key(Key::plain(KeyCode::Char('o'))))
                 } else {
-                    Some(Input::Click {
-                        x: m.column,
-                        y: m.row,
-                    })
+                    let w = term.size().map(|s| s.width).unwrap_or(0);
+                    view.as_ref()
+                        .and_then(|v| sidebar::list_row(v, w, h, m.row))
+                        .map(|y| Input::Click { x: m.column, y })
                 }
             }
             Event::Resize(..) => {

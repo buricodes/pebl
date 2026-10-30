@@ -196,6 +196,35 @@ mod tests {
     }
 
     #[test]
+    fn clicks_land_on_the_row_drawn_when_the_list_scrolls() {
+        let mut v = base();
+        v.cursor = Some(Cursor::Session(1, 2));
+        let (w, h) = (30u16, 12u16);
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        sidebar::render(&v, &mut Painter::new(&mut buf, area, v.color), 1);
+        let text = to_text(&buf);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(!lines[1].contains("nova-api"), "{text}");
+        let mut hits = 0;
+        for y in 0..h {
+            let Some(c) = sidebar::list_row(&v, w, h, y).and_then(|r| sidebar::hit(&v, r)) else {
+                continue;
+            };
+            let name = match c {
+                Cursor::Project(pi) => v.projects[pi].name.clone(),
+                Cursor::Session(pi, si) => v.projects[pi].sessions[si].name.clone(),
+            };
+            assert!(
+                lines[y as usize].contains(&name[..6]),
+                "row {y} hit {name}\n{text}"
+            );
+            hits += 1;
+        }
+        assert!(hits >= 3, "{text}");
+    }
+
+    #[test]
     fn s01_default_view() {
         let t = transcript();
         insta::assert_snapshot!(snap(&base(), 120, 40, Main::Lines(&t)));

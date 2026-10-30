@@ -90,11 +90,7 @@ enum Row<'a> {
     Blank,
 }
 
-pub fn render(v: &View, p: &mut Painter, frame: u64) {
-    let w = p.w();
-    let h = p.h();
-    let compact = matches!(v.layout, Layout::Compact(_));
-
+fn rows(v: &View) -> Vec<Row<'_>> {
     let mut rows: Vec<Row> = Vec::new();
     for (pi, pr) in v.projects.iter().enumerate() {
         rows.push(Row::Project(pi));
@@ -111,7 +107,17 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
         }
         rows.push(Row::Blank);
     }
+    rows
+}
 
+struct Fit {
+    pet: Option<(&'static mascot::Character, Pet)>,
+    room: usize,
+    scroll: usize,
+}
+
+fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
+    let compact = matches!(v.layout, Layout::Compact(_));
     let top = 1;
     let base = bottom(v, h);
     let pet = mascot::current(v).map(|c| {
@@ -140,6 +146,22 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
         })
         .unwrap_or(0);
     let scroll = (focus_row + 2).saturating_sub(room);
+    Fit { pet, room, scroll }
+}
+
+pub fn list_row(v: &View, w: u16, h: u16, y: u16) -> Option<u16> {
+    let f = fit_rows(v, &rows(v), w as i32, h as i32);
+    (y >= 1 && (y as usize) <= f.room).then_some(y + f.scroll as u16)
+}
+
+pub fn render(v: &View, p: &mut Painter, frame: u64) {
+    let w = p.w();
+    let h = p.h();
+    let compact = matches!(v.layout, Layout::Compact(_));
+    let rows = rows(v);
+    let top = 1;
+    let base = bottom(v, h);
+    let Fit { pet, room, scroll } = fit_rows(v, &rows, w, h);
 
     if v.projects.is_empty() {
         let msg = if v.filter.is_empty() {

@@ -54,6 +54,8 @@ The build takes about a minute. `pebl doctor` checks that tmux, Claude Code and 
 
 **Updating:** run `pebl update`. It installs the latest release and switches the running pebl over without stopping your sessions. pebl checks GitHub once a day and shows `pebl 0.x.y is out · pebl update` in the status bar when there's a new release; `pebl doctor` reports it too. Set `update_check = false` in `~/.pebl/config.toml` to turn the check off. To hear about releases by email, use **Watch → Custom → Releases** on GitHub.
 
+**Usage ping:** once a day pebl sends a random install id (made on first run, stored in `~/.pebl/install_id`) and its version number to `getpebl.vercel.app`, so the website can show how many people used pebl this week. Nothing else is sent: no names, paths, projects, prompts or anything from Claude, and the server keeps only a hash of the id. Turn it off with `telemetry = false` in `~/.pebl/config.toml`, or set `DO_NOT_TRACK=1` or `PEBL_NO_TELEMETRY=1`. `pebl doctor` shows whether it's on.
+
 **From a clone:** `cargo install --path .`
 
 **Optional (macOS):** `pebl hotkey install` adds a global shortcut that brings pebl to the front from any app. See [Summon from anywhere](#summon-from-anywhere-macos).
