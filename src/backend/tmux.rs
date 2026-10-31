@@ -145,6 +145,12 @@ impl Tmux {
             .map(|s| s.lines().map(str::to_string).collect())
             .unwrap_or_default()
     }
+
+    pub fn client_pids(&self) -> Vec<u32> {
+        self.run(&["list-clients", "-F", "#{client_pid}"])
+            .map(|s| s.lines().filter_map(|l| l.trim().parse().ok()).collect())
+            .unwrap_or_default()
+    }
 }
 
 impl SessionBackend for Tmux {

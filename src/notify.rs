@@ -6,13 +6,22 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 pub fn deliver(batch: Vec<Outgoing>, cfg: &Notify) {
+    let tmux = Tmux::new(paths::tmux_socket());
+    let mut in_front: Option<bool> = None;
     let mut looking: Option<bool> = None;
     for n in batch {
+        if n.away_only
+            && *looking.get_or_insert_with(|| {
+                crate::hotkey::looking_at_pebl(&tmux.client_ttys(), &tmux.client_pids())
+            })
+        {
+            continue;
+        }
         match n.channel {
             Channel::Chime => chime(&n.title),
             Channel::Desktop | Channel::Phone => {
-                let front = *looking.get_or_insert_with(|| {
-                    let ttys = Tmux::new(paths::tmux_socket()).client_ttys();
+                let front = *in_front.get_or_insert_with(|| {
+                    let ttys = tmux.client_ttys();
                     !ttys.is_empty() && crate::hotkey::pebl_in_front(&ttys)
                 });
                 if front {

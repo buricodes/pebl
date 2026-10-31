@@ -226,6 +226,7 @@ struct Pending {
     desktop: bool,
     phone: bool,
     rung: bool,
+    watched: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -240,6 +241,7 @@ pub struct Outgoing {
     pub title: String,
     pub body: String,
     pub channel: Channel,
+    pub away_only: bool,
 }
 
 impl<B: SessionBackend + UiBackend> App<B> {
@@ -1155,30 +1157,29 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             let watched = self.focus == Focus::Main
                 && (self.active.as_deref() == Some(s.id.as_str()) || self.cols.contains(&s.id));
-            let note = |kind| Pending {
-                sid: s.id.clone(),
-                kind,
-                at: t,
-                desktop: false,
-                phone: false,
-                rung: false,
+            let kind = match (prev, s.status) {
+                (Some(_), Status::Waiting) => Some(NoticeKind::Waiting),
+                (Some(Status::Running | Status::Waiting), Status::Idle) => Some(NoticeKind::Done),
+                (Some(_), Status::Error) => Some(NoticeKind::Error),
+                _ => None,
             };
-            match (prev, s.status) {
-                (Some(_), Status::Waiting) if !watched => {
-                    self.pending.push(note(NoticeKind::Waiting));
+            if let Some(kind) = kind {
+                if !watched && kind != NoticeKind::Waiting {
+                    self.alerts.insert(s.id.clone(), (kind, t));
                 }
-                (Some(Status::Running | Status::Waiting), Status::Idle) if !watched => {
-                    self.alerts.insert(s.id.clone(), (NoticeKind::Done, t));
-                    self.pending.push(note(NoticeKind::Done));
-                }
-                (Some(_), Status::Error) if !watched => {
-                    self.alerts.insert(s.id.clone(), (NoticeKind::Error, t));
-                    self.pending.push(note(NoticeKind::Error));
-                }
-                (_, Status::Running | Status::Waiting) => {
-                    self.alerts.remove(&s.id);
-                }
-                _ => {}
+                self.pending.push(Pending {
+                    sid: s.id.clone(),
+                    kind,
+                    at: t,
+                    desktop: false,
+                    phone: false,
+                    rung: false,
+                    watched,
+                });
+            }
+            if (kind.is_none() || watched) && matches!(s.status, Status::Running | Status::Waiting)
+            {
+                self.alerts.remove(&s.id);
             }
         }
         self.alerts.retain(|sid, (k, at)| {
@@ -1214,16 +1215,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
             let Some(s) = st.session(&p.sid) else {
                 return false;
             };
-            if watched.contains(&p.sid) {
-                return false;
-            }
-            let live = match p.kind {
-                NoticeKind::Waiting => s.status == Status::Waiting,
-                _ => alerts.contains_key(&p.sid),
-            };
-            if !live {
-                return false;
-            }
             let project = st
                 .project(&s.project)
                 .map(|p| p.name.clone())
@@ -1234,6 +1225,40 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 _ => format!("{} finished", s.name),
             };
             let title = format!("pebl · {project}");
+            if p.watched {
+                let still = match p.kind {
+                    NoticeKind::Waiting => Status::Waiting,
+                    NoticeKind::Error => Status::Error,
+                    _ => Status::Idle,
+                };
+                if s.status == still {
+                    out.extend(cfg.sound_for(p.kind).map(|sound| Outgoing {
+                        title: sound,
+                        body: String::new(),
+                        channel: Channel::Chime,
+                        away_only: true,
+                    }));
+                    if cfg.desktop.on(p.kind) {
+                        out.push(Outgoing {
+                            title,
+                            body,
+                            channel: Channel::Desktop,
+                            away_only: true,
+                        });
+                    }
+                }
+                return false;
+            }
+            if watched.contains(&p.sid) {
+                return false;
+            }
+            let live = match p.kind {
+                NoticeKind::Waiting => s.status == Status::Waiting,
+                _ => alerts.contains_key(&p.sid),
+            };
+            if !live {
+                return false;
+            }
             if !p.rung {
                 p.rung = true;
                 if let Some(sound) = cfg.sound_for(p.kind) {
@@ -1241,6 +1266,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                         title: sound,
                         body: String::new(),
                         channel: Channel::Chime,
+                        away_only: false,
                     });
                 }
                 if cfg.bell.on(p.kind) {
@@ -1256,6 +1282,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     title: title.clone(),
                     body: body.clone(),
                     channel: Channel::Desktop,
+                    away_only: false,
                 });
             }
             let phone_due = !cfg.phone.is_empty()
@@ -1267,6 +1294,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     title,
                     body,
                     channel: Channel::Phone,
+                    away_only: false,
                 });
             }
             let phone_left = !cfg.phone.is_empty() && p.kind != NoticeKind::Done && !p.phone;
@@ -4344,6 +4372,7 @@ mod tests {
         let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         a.tick();
+        assert!(a.outbox.iter().all(|o| !o.away_only));
         let sent: Vec<(Channel, String)> = a
             .outbox
             .drain(..)
@@ -4366,9 +4395,20 @@ mod tests {
         );
         a.tick();
         assert!(a.outbox.is_empty());
-        a.handle_hook(&ids[0], "PostToolUse", &serde_json::Value::Null);
-        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         a.handle_ctl(&["waiting".into()]);
+        a.handle_hook(&ids[0], "PostToolUse", &serde_json::Value::Null);
+        a.tick();
+        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
+        a.tick();
+        let on_screen: Vec<(Channel, bool)> = a
+            .outbox
+            .drain(..)
+            .map(|o| (o.channel, o.away_only))
+            .collect();
+        assert_eq!(
+            on_screen,
+            vec![(Channel::Chime, true), (Channel::Desktop, true)]
+        );
         a.tick();
         assert!(a.outbox.is_empty(), "{:?}", a.outbox);
     }

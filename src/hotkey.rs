@@ -340,6 +340,52 @@ return "no""#
             && front("iTerm", "tty of current session of current window"))
 }
 
+pub fn looking_at_pebl(ttys: &[String], pids: &[u32]) -> bool {
+    if pebl_in_front(ttys) {
+        return true;
+    }
+    let Some((app, front)) = front_app() else {
+        return true;
+    };
+    if app == "com.apple.Terminal" || app == "com.googlecode.iterm2" {
+        return false;
+    }
+    pids.iter().any(|p| ancestors(*p).contains(&front))
+}
+
+fn front_app() -> Option<(String, u32)> {
+    let run = |args: &[&str]| {
+        Command::new("lsappinfo")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let asn = run(&["front"])?;
+    let info = run(&["info", "-only", "bundleid", "-only", "pid", &asn])?;
+    let field = |key: &str| {
+        info.lines()
+            .find_map(|l| l.strip_prefix(&format!("\"{key}\"=")))
+            .map(|v| v.trim_matches('"').to_string())
+    };
+    Some((field("CFBundleIdentifier")?, field("pid")?.parse().ok()?))
+}
+
+fn ancestors(mut pid: u32) -> Vec<u32> {
+    let mut chain = Vec::new();
+    while pid > 1 && chain.len() < 32 {
+        chain.push(pid);
+        pid = Command::new("ps")
+            .args(["-o", "ppid=", "-p", &pid.to_string()])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+            .unwrap_or(0);
+    }
+    chain
+}
+
 fn focus_iterm_session(ttys: &[String]) -> bool {
     osascript(&format!(
         r#"if application "iTerm" is not running then return "no"
