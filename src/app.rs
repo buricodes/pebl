@@ -2086,8 +2086,8 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
     }
 
-    fn cancel_mode(&mut self) {
-        if matches!(
+    fn in_strip(&self) -> bool {
+        matches!(
             self.mode,
             IMode::NewProject(_)
                 | IMode::Peek { .. }
@@ -2100,7 +2100,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 | IMode::Compare { .. }
                 | IMode::Plan { .. }
                 | IMode::Ask { .. }
-        ) {
+        )
+    }
+
+    fn cancel_mode(&mut self) {
+        if self.in_strip() {
             self.mode = IMode::Normal;
             self.apply_layout();
         }
@@ -3134,6 +3138,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn click(&mut self, y: u16) -> Result<()> {
+        if self.in_strip() {
+            self.cancel_mode();
+        }
         if !matches!(self.mode, IMode::Normal) {
             return Ok(());
         }
@@ -5423,6 +5430,10 @@ mod tests {
         key(&mut a, Role::Bar, KeyCode::Enter);
         assert_eq!(a.view().active.unwrap().session, "a");
         assert_eq!(a.view().focus, Focus::Main);
+
+        a.handle_ctl(&["ask".into()]);
+        a.handle_input(Role::Sidebar, Input::Click { x: 3, y: 2 });
+        assert_eq!(a.view().mode, Mode::Normal);
     }
 
     #[test]

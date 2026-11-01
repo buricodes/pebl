@@ -33,8 +33,8 @@ expression: "snap(&v, 120, 40, Main::Lines(&t))"
  + new session         ctrl+n │ │ >
  + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- ▐O▌ Ask jel  one line, always                                                      answers can include a key to act on
-
+ ▄▆██▆▄  Ask jel                                                                    answers can include a key to act on
+ █O██O█  one line answers from your own Claude
    ? what is e2e-tests stuck on?
      3 specs time out waiting for network idle
    ? how do I run two terminals?

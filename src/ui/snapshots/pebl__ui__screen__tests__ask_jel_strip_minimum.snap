@@ -19,8 +19,8 @@ expression: "snap(&v, 80, 24, Main::Lines(&t))"
  + new session     ^n │ │ >
  + new project     ^o │ ╰───────────────────────────────────────────────────────
 ──────────────────────┴─────────────────────────────────────────────────────────
- ▐O▌ Ask jel
-
+ ▄▆██▆▄  Ask jel
+ █O██O█
    ? which chat is waiting on me?
      › thinking…
    >    ask another, or esc

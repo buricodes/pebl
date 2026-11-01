@@ -603,13 +603,16 @@ fn ask_shown(av: &AskView, short: bool) -> usize {
 
 fn ask(av: &AskView, p: &mut Painter, short: bool) {
     let w = p.w();
-    p.t(1, 0, "▐", Tok::Acc, false);
-    p.t(2, 0, "O", Tok::Ink, true);
-    p.bg(2, 0, 1, Tok::Acc);
-    p.t(3, 0, "▌", Tok::Acc, false);
-    let x = p.segs(5, 0, &[segb("Ask jel", Tok::Fg)]);
+    super::mascot::jel_head(p, 0, 1, 0);
+    p.segs(9, 0, &[segb("Ask jel", Tok::Fg)]);
     if !short {
-        p.t(x, 0, "  one line, always", Tok::Dim, false);
+        p.t(
+            9,
+            1,
+            "one line answers from your own Claude",
+            Tok::Dim,
+            false,
+        );
         p.rt(
             w - 1,
             0,

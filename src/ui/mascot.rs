@@ -204,7 +204,29 @@ fn tip_pose(f: u64) -> Pose {
 }
 
 fn draw(p: &mut Painter, c: &Character, pose: Pose, tok: Tok, bold: bool, x: i32, y: i32) {
-    for (i, line) in (c.art)(pose).iter().enumerate() {
+    draw_rows(p, c, pose, tok, bold, (x, y), usize::MAX);
+}
+
+pub fn jel_head(p: &mut Painter, f: u64, x: i32, y: i32) {
+    let pose = Pose {
+        eye: 'O',
+        mark: ' ',
+        ..pose(NoticeKind::Working, f)
+    };
+    draw_rows(p, &JEL, pose, Tok::Acc, false, (x - 2, y), 2);
+}
+
+fn draw_rows(
+    p: &mut Painter,
+    c: &Character,
+    pose: Pose,
+    tok: Tok,
+    bold: bool,
+    at: (i32, i32),
+    rows: usize,
+) {
+    let (x, y) = at;
+    for (i, line) in (c.art)(pose).iter().take(rows).enumerate() {
         let yy = y + i as i32;
         if !c.solid {
             p.t(x, yy, line, tok, bold);
