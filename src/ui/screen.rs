@@ -368,6 +368,15 @@ mod tests {
     }
 
     #[test]
+    fn jel_tip_short_window() {
+        let mut v = base();
+        v.mascot = Some("jel".into());
+        v.tip = Some(tip());
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 120, 24, Main::Lines(&t)));
+    }
+
+    #[test]
     fn jel_tip_compact() {
         let mut v = base();
         v.layout = Layout::for_width(80, false);

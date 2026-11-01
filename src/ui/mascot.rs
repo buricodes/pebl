@@ -313,31 +313,41 @@ pub fn ask_hint(short: bool) -> Vec<Seg> {
     ]
 }
 
-fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, x: i32, y: i32, w: i32) {
+fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32), w: i32, h: i32) {
+    let (x, y) = at;
     draw(p, c, tip_pose(f), Tok::Mute, false, x, y);
     let tw = (w - x - TEXT_X).max(0) as usize;
-    let beside = [
-        vec![segb(t.key.clone(), Tok::Acc)],
-        vec![
+    let key = vec![segb(t.key.clone(), Tok::Acc)];
+    let beside: Vec<Vec<Seg>> = if h > CARD_H {
+        let bw = (w - x - 1).max(1) as usize;
+        for (i, line) in wrap(&t.text, bw, TIP_LINES as usize).iter().enumerate() {
+            p.t(x, y + CARD_H + i as i32, line, Tok::Fg, false);
+        }
+        let count = vec![
             seg("tip", Tok::Mute),
             seg(format!(" · {}/{}", t.at, t.total), Tok::Dim),
-        ],
-        Vec::new(),
-        ask_hint(false),
-    ];
+        ];
+        vec![key, count, Vec::new(), ask_hint(false)]
+    } else {
+        let mut lines = vec![key];
+        lines.extend(
+            wrap(&t.text, tw, 2)
+                .into_iter()
+                .map(|l| vec![seg(l, Tok::Fg)]),
+        );
+        lines.resize(3, Vec::new());
+        lines.push(ask_hint(false));
+        lines
+    };
     for (i, line) in beside.iter().enumerate() {
         p.segs(x + TEXT_X, y + i as i32, &fit_segs(line, tw));
     }
-    let bw = (w - x - 1).max(1) as usize;
-    for (i, line) in wrap(&t.text, bw, TIP_LINES as usize).iter().enumerate() {
-        p.t(x, y + CARD_H + i as i32, line, Tok::Fg, false);
-    }
 }
 
-pub fn card(p: &mut Painter, c: &Character, v: &View, f: u64, x: i32, y: i32, w: i32) {
+pub fn card(p: &mut Painter, c: &Character, v: &View, f: u64, at: (i32, i32), w: i32, h: i32) {
     match &v.tip {
-        Some(t) => tip_card(p, c, t, f, x, y, w),
-        None => notice_card(p, c, &v.notice, f, x, y, w),
+        Some(t) => tip_card(p, c, t, f, at, w, h),
+        None => notice_card(p, c, &v.notice, f, at.0, at.1, w),
     }
 }
 
@@ -352,7 +362,7 @@ fn notice_card(p: &mut Painter, c: &Character, n: &Notice, f: u64, x: i32, y: i3
 pub fn compact(p: &mut Painter, c: &Character, v: &View, f: u64, x: i32, y: i32, w: i32) {
     let n = &v.notice;
     let (pose, tok) = match v.tip {
-        Some(_) => (tip_pose(f), Tok::Mute),
+        Some(_) => (tip_pose(f), Tok::Acc),
         None => (pose(n.kind, f), tone(n.kind)),
     };
     let mut xx = x;

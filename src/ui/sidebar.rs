@@ -4,7 +4,7 @@ use crate::view::{CheckBadge, Cursor, Layout, Mode, View};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Pet {
-    Card,
+    Card(i32),
     Line,
     None,
 }
@@ -26,16 +26,15 @@ fn bottom(v: &View, h: i32) -> i32 {
     }
 }
 
-pub fn pet_rows(v: &View, h: u16) -> Option<(u16, u16)> {
-    mascot::current(v)?;
+pub fn pet_rows(v: &View, w: u16, h: u16) -> Option<(u16, u16)> {
     let b = bottom(v, h as i32);
-    let full = !matches!(v.layout, Layout::Compact(_));
-    let ch = mascot::card_h(v);
-    if full && b >= 2 + ch {
-        Some(((b - ch) as u16, (b - 1) as u16))
-    } else {
-        let y = (b - 1).max(0) as u16;
-        Some((y, y))
+    match fit_rows(v, &rows(v), w as i32, h as i32).pet? {
+        (_, Pet::Card(ch)) => Some(((b - ch) as u16, (b - 1) as u16)),
+        (_, Pet::Line) => {
+            let y = (b - 1).max(0) as u16;
+            Some((y, y))
+        }
+        (_, Pet::None) => None,
     }
 }
 
@@ -121,11 +120,13 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
     let compact = matches!(v.layout, Layout::Compact(_));
     let top = 1;
     let base = bottom(v, h);
-    let ch = mascot::card_h(v);
     let pet = mascot::current(v).map(|c| {
         let need = top + rows.len() as i32;
-        if !compact && w >= 24 && need < base - ch {
-            (c, Pet::Card)
+        let card = [mascot::card_h(v), mascot::CARD_H]
+            .into_iter()
+            .find(|ch| !compact && w >= 24 && need < base - ch);
+        if let Some(ch) = card {
+            (c, Pet::Card(ch))
         } else if need < base {
             (c, Pet::Line)
         } else {
@@ -133,7 +134,7 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
         }
     });
     let limit = match pet {
-        Some((_, Pet::Card)) => base - ch - 1,
+        Some((_, Pet::Card(ch))) => base - ch - 1,
         Some((_, Pet::Line)) => base - 1,
         _ => base,
     };
@@ -313,10 +314,10 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
     }
 
     match pet {
-        Some((c, Pet::Card)) => {
-            let ry = base - mascot::card_h(v) - 1;
+        Some((c, Pet::Card(ch))) => {
+            let ry = base - ch - 1;
             p.hl(0, ry, w);
-            mascot::card(p, c, v, frame, 1, ry + 1, w);
+            mascot::card(p, c, v, frame, (1, ry + 1), w, ch);
         }
         Some((c, Pet::Line)) => mascot::compact(p, c, v, frame, 1, base - 1, w),
         _ => {}

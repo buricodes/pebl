@@ -123,11 +123,11 @@ fn run_loop(role: Role) -> Result<()> {
             }
             Event::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left) => {
                 let h = term.size().map(|s| s.height).unwrap_or(0);
+                let w = term.size().map(|s| s.width).unwrap_or(0);
                 let pet = view
                     .as_ref()
-                    .and_then(|v| sidebar::pet_rows(v, h))
+                    .and_then(|v| sidebar::pet_rows(v, w, h))
                     .is_some_and(|(a, b)| m.row >= a && m.row <= b);
-                let w = term.size().map(|s| s.width).unwrap_or(0);
                 if role == Role::Bar {
                     let button = view
                         .as_ref()
