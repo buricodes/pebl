@@ -187,8 +187,9 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "shell drawer",
         &[
             ("ctrl+t", "open shell / back to Claude / hide"),
+            ("alt+t", "another shell beside it (exit closes one)"),
             ("alt+r", "type Claude's next command"),
-            ("alt+↑ / alt+↓", "resize the drawer"),
+            ("alt+↑↓ · alt+←→", "resize · move between shells"),
             ("alt+c", "send shell output to Claude"),
         ],
     ),

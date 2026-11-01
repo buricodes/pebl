@@ -33,7 +33,7 @@ pub struct Arrangement {
     pub sidebar: Option<(String, u16)>,
     pub tabs: Option<String>,
     pub cols: Vec<(String, u16)>,
-    pub drawer: Option<(String, u16)>,
+    pub drawer: Option<(Vec<String>, u16)>,
     pub bar: (String, u16),
 }
 
@@ -58,7 +58,7 @@ impl Arrangement {
             o.push(p.clone());
             if i == 0 {
                 if let Some((d, _)) = &self.drawer {
-                    o.push(d.clone());
+                    o.extend(d.iter().cloned());
                 }
             }
         }
@@ -77,14 +77,37 @@ impl Arrangement {
             Some((_, sw)) => (sw + 1, w.saturating_sub(sw + 1)),
             None => (0, w),
         };
+        let row = |panes: &[String], w: u16, h: u16, x: u16, y: u16| {
+            let n = panes.len().max(1) as u16;
+            let each = w.saturating_sub(n - 1) / n;
+            let mut px = x;
+            let cells: Vec<String> = panes
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let pw = if i + 1 == panes.len() {
+                        (x + w).saturating_sub(px)
+                    } else {
+                        each
+                    };
+                    let c = leaf(p, pw, h, px, y);
+                    px += pw + 1;
+                    c
+                })
+                .collect();
+            match cells.len() {
+                1 => cells[0].clone(),
+                _ => format!("{w}x{h},{x},{y}{{{}}}", cells.join(",")),
+            }
+        };
         let cell = |i: usize, p: &str, cw: u16, rh: u16, x: u16, ry: u16| match (i, &self.drawer) {
-            (0, Some((d, dh))) => {
+            (0, Some((d, dh))) if !d.is_empty() => {
                 let dh = (*dh).clamp(1, rh.saturating_sub(7).max(1));
                 let ch = rh - dh - 1;
                 format!(
                     "{cw}x{rh},{x},{ry}[{},{}]",
                     leaf(p, cw, ch, x, ry),
-                    leaf(d, cw, dh, x, ry + ch + 1)
+                    row(d, cw, dh, x, ry + ch + 1)
                 )
             }
             _ => leaf(p, cw, rh, x, ry),

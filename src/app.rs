@@ -125,6 +125,22 @@ const SHELLS: [&str; 10] = [
     "zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu", "login", "xonsh",
 ];
 const MIN_DRAWER: u16 = 6;
+const MIN_SHELL_W: u16 = 24;
+
+fn by_session(list: &[crate::backend::ShellPane]) -> HashMap<String, Vec<String>> {
+    let mut sorted: Vec<&crate::backend::ShellPane> = list.iter().collect();
+    sorted.sort_by_key(|sp| {
+        (
+            sp.pane.trim_start_matches('%').parse::<u64>().ok(),
+            sp.pane.clone(),
+        )
+    });
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for sp in sorted {
+        out.entry(sp.sid.clone()).or_default().push(sp.pane.clone());
+    }
+    out
+}
 
 #[derive(Clone, Debug)]
 pub struct Env {
@@ -189,10 +205,11 @@ pub struct App<B: SessionBackend + UiBackend> {
     found: Option<crate::search::Results>,
     queued: HashMap<String, Vec<String>>,
     pub search_root: Option<PathBuf>,
-    shells: HashMap<String, String>,
+    shells: HashMap<String, Vec<String>>,
+    shell_focus: Option<String>,
     drawer: HashSet<String>,
     drawer_h: Option<u16>,
-    drawer_shown: Option<String>,
+    drawer_shown: Vec<String>,
     shell_run: HashMap<String, ShellRun>,
     runnable: HashMap<String, (Vec<String>, usize)>,
     flags: HashMap<&'static str, bool>,
@@ -293,9 +310,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             queued: HashMap::new(),
             search_root: None,
             shells: HashMap::new(),
+            shell_focus: None,
             drawer: HashSet::new(),
             drawer_h: None,
-            drawer_shown: None,
+            drawer_shown: Vec::new(),
             shell_run: HashMap::new(),
             runnable: HashMap::new(),
             flags: HashMap::new(),
@@ -314,9 +332,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
-            for sp in list {
-                app.shells.insert(sp.sid, sp.pane);
-            }
+            app.shells = by_session(&list);
         }
         app.adopt_ui();
         app.refresh_panes();
@@ -457,10 +473,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
             ["restore", sid, to] => self.restore_checkpoint(sid, to),
             ["finish", sid] => self.start_finish(sid).map(|_| String::new()),
             ["shell"] => self.toggle_shell().map(|_| String::new()),
+            ["shell-new"] => self.new_shell().map(|_| String::new()),
             ["run-next"] => self.run_next().map(|_| String::new()),
             ["shell-to-claude"] => self.shell_to_claude().map(|_| String::new()),
             ["drawer-resize", dir] => {
-                if self.drawer_shown.is_none() {
+                if self.drawer_shown.is_empty() {
                     Err(anyhow!("open the shell first (ctrl+t)"))
                 } else {
                     self.mode = IMode::DrawerResize;
@@ -523,6 +540,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             ["column", n] => {
                 self.focus_column(n.parse::<usize>().unwrap_or(1).saturating_sub(1));
+                Ok(String::new())
+            }
+            ["resize", dir] if self.focus == Focus::Shell && self.drawer_shown.len() > 1 => {
+                self.step_shell(if *dir == "left" { -1 } else { 1 });
                 Ok(String::new())
             }
             ["resize", dir] => {
@@ -813,8 +834,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
         } else {
             Focus::Main
         };
-        if self.shells.values().any(|p| p == pane) {
+        if self.shells.values().flatten().any(|p| p == pane) {
             self.focus = Focus::Shell;
+            self.shell_focus = Some(pane.to_string());
             self.col = 0;
         }
         if self.focus == Focus::Main && !self.cols.is_empty() {
@@ -845,7 +867,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
             Focus::Sidebar => Some(ui.sidebar.clone()),
             Focus::Bar => Some(ui.bar.clone()),
             Focus::Main => self.focused_pane(),
-            Focus::Shell => self.drawer_shown.clone(),
+            Focus::Shell => self
+                .active
+                .as_deref()
+                .and_then(|sid| self.current_shell(sid))
+                .filter(|p| self.drawer_shown.contains(p)),
         };
         if let Some(t) = target {
             let _ = self.be.select(&t);
@@ -882,7 +908,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn dragged(&mut self) {
-        if let Some(d) = self.drawer_shown.clone() {
+        if let Some(d) = self.drawer_shown.first().cloned() {
             if let Ok(hs) = self.be.heights() {
                 if let Some((_, h)) = hs.iter().find(|(p, _)| *p == d) {
                     if *h <= 2 {
@@ -990,13 +1016,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
         for (p, w) in panes.iter().zip(widths.iter().skip(1)) {
             cols.push((p.clone(), *w));
         }
-        let drawer = self.drawer_pane();
+        let drawer = self.drawer_panes();
         let a = Arrangement {
             win: self.win,
             sidebar: self.sidebar_w().map(|w| (ui.sidebar.clone(), w)),
             tabs: tabs.filter(|_| cols.len() > 1),
             cols,
-            drawer: drawer.clone().map(|p| (p, self.drawer_height())),
+            drawer: (!drawer.is_empty()).then(|| (drawer.clone(), self.drawer_height())),
             bar: (ui.bar.clone(), {
                 self.bar_h = crate::ui::bar::height(&self.view());
                 self.bar_h
@@ -1413,7 +1439,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Err(e) => self.flash(format!("{e:#}")),
             }
         }
-        if self.drawer_pane() != self.drawer_shown {
+        if self.drawer_panes() != self.drawer_shown {
             self.apply_layout();
         }
     }
@@ -1717,7 +1743,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 if let Some(p) = &s.pane {
                     let _ = self.be.kill(p);
                 }
-                if let Some(p) = self.shells.remove(sid.as_str()) {
+                for p in self.shells.remove(sid.as_str()).unwrap_or_default() {
                     let _ = self.be.kill(&p);
                 }
                 self.drawer.remove(sid.as_str());
@@ -2086,15 +2112,22 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
-    fn drawer_pane(&self) -> Option<String> {
-        if self.stage_kind().is_some() {
-            return None;
+    fn drawer_panes(&self) -> Vec<String> {
+        match &self.active {
+            Some(sid) if self.stage_kind().is_none() && self.drawer.contains(sid) => {
+                self.shells.get(sid).cloned().unwrap_or_default()
+            }
+            _ => Vec::new(),
         }
-        let sid = self.active.as_ref()?;
-        if !self.drawer.contains(sid) {
-            return None;
-        }
-        self.shells.get(sid).cloned()
+    }
+
+    fn current_shell(&self, sid: &str) -> Option<String> {
+        let list = self.shells.get(sid)?;
+        self.shell_focus
+            .as_ref()
+            .filter(|p| list.contains(p))
+            .or(list.first())
+            .cloned()
     }
 
     fn column_rows(&self) -> u16 {
@@ -2111,19 +2144,62 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn ensure_shell(&mut self, sid: &str) -> Result<String> {
-        if let Some(p) = self.shells.get(sid) {
-            return Ok(p.clone());
+        match self.current_shell(sid) {
+            Some(p) => Ok(p),
+            None => self.add_shell(sid),
         }
+    }
+
+    fn add_shell(&mut self, sid: &str) -> Result<String> {
         let s = self
             .st
             .session(sid)
             .ok_or_else(|| anyhow!("no such session"))?;
+        let n = self.shells.get(sid).map_or(0, Vec::len) as u16 + 1;
         let w = self.col_w.first().copied().unwrap_or(self.main_width());
+        if n > 1 && w / n < MIN_SHELL_W {
+            bail!("no room for another shell here; type exit in one to close it");
+        }
         let pane = self
             .be
-            .spawn_shell(sid, &s.cwd, (w, self.drawer_height()))?;
-        self.shells.insert(sid.to_string(), pane.clone());
+            .spawn_shell(sid, &s.cwd, (w / n, self.drawer_height()))?;
+        self.shells
+            .entry(sid.to_string())
+            .or_default()
+            .push(pane.clone());
+        self.shell_focus = Some(pane.clone());
         Ok(pane)
+    }
+
+    fn new_shell(&mut self) -> Result<()> {
+        let sid = self
+            .active
+            .clone()
+            .ok_or_else(|| anyhow!("open a session first"))?;
+        if self.shells.get(&sid).is_some_and(|l| !l.is_empty()) {
+            self.add_shell(&sid)?;
+        }
+        self.cancel_mode();
+        self.open_drawer()?;
+        self.set_focus(Focus::Shell);
+        Ok(())
+    }
+
+    fn step_shell(&mut self, delta: i32) {
+        let list = self.drawer_shown.clone();
+        let Some(sid) = self.active.clone() else {
+            return;
+        };
+        let at = self
+            .current_shell(&sid)
+            .and_then(|p| list.iter().position(|x| *x == p))
+            .unwrap_or(0) as i32;
+        let n = list.len() as i32;
+        if n == 0 {
+            return;
+        }
+        self.shell_focus = list.get((at + delta).rem_euclid(n) as usize).cloned();
+        self.set_focus(Focus::Shell);
     }
 
     fn open_drawer(&mut self) -> Result<String> {
@@ -2134,8 +2210,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let pane = self.ensure_shell(&sid)?;
         self.help = false;
         self.drawer.insert(sid.clone());
-        if let Some(r) = self.shell_run.get_mut(&sid) {
-            r.done = None;
+        for p in self.shells.get(&sid).cloned().unwrap_or_default() {
+            if let Some(r) = self.shell_run.get_mut(&p) {
+                r.done = None;
+            }
         }
         self.col = 0;
         self.apply_layout();
@@ -2147,7 +2225,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .active
             .clone()
             .ok_or_else(|| anyhow!("open a session first"))?;
-        let open = self.drawer.contains(&sid) && self.drawer_shown.is_some();
+        let open = self.drawer.contains(&sid) && !self.drawer_shown.is_empty();
         if !open {
             self.cancel_mode();
             self.open_drawer()?;
@@ -2189,9 +2267,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .clone()
             .ok_or_else(|| anyhow!("open a session first"))?;
         let shell = self
-            .shells
-            .get(&sid)
-            .cloned()
+            .current_shell(&sid)
             .ok_or_else(|| anyhow!("this session has no shell yet (ctrl+t)"))?;
         let claude = self
             .st
@@ -2208,12 +2284,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let tail = lines[end.saturating_sub(40)..end].join("\n");
         let cmd = self
             .shell_run
-            .get(&sid)
+            .get(&shell)
             .and_then(|r| r.done.as_ref().map(|d| d.0.clone()))
             .unwrap_or_else(|| "my shell".into());
         let msg = format!("Here's the output of `{cmd}` from my shell:\n```\n{tail}\n```\n");
         self.be.send_text(&claude, &msg, false)?;
-        if let Some(r) = self.shell_run.get_mut(&sid) {
+        if let Some(r) = self.shell_run.get_mut(&shell) {
             r.done = None;
         }
         self.col = 0;
@@ -2231,36 +2307,33 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     fn refresh_shells(&mut self) {
         let Ok(list) = self.be.shells() else { return };
-        let mut seen = HashMap::new();
-        for sp in &list {
-            seen.insert(sp.sid.clone(), sp.pane.clone());
-        }
-        self.shells = seen;
+        self.shells = by_session(&list);
         let shells = self.shells.clone();
         self.drawer.retain(|sid| shells.contains_key(sid));
-        self.shell_run.retain(|sid, _| shells.contains_key(sid));
+        self.shell_run
+            .retain(|pane, _| list.iter().any(|sp| sp.pane == *pane));
         for sp in list {
             let name = sp.command.trim_start_matches('-');
             let idle = SHELLS.contains(&name) || sp.command.is_empty();
-            let was = self.shell_run.get(&sp.sid).and_then(|r| r.running.clone());
+            let was = self.shell_run.get(&sp.pane).and_then(|r| r.running.clone());
             match (idle, was) {
                 (false, None) => {
                     let cmd = self.be.child_command(sp.pid).unwrap_or(sp.command.clone());
-                    let r = self.shell_run.entry(sp.sid.clone()).or_default();
+                    let r = self.shell_run.entry(sp.pane.clone()).or_default();
                     r.running = Some(cmd);
                     r.done = None;
                 }
                 (true, Some(cmd)) => {
                     let tail = self.be.capture(&sp.pane).unwrap_or_default();
                     let (failed, detail) = classify(&tail);
-                    let r = self.shell_run.entry(sp.sid.clone()).or_default();
+                    let r = self.shell_run.entry(sp.pane.clone()).or_default();
                     r.running = None;
                     r.done = Some((cmd, failed, detail));
                 }
                 _ => {}
             }
         }
-        if self.drawer_pane() != self.drawer_shown
+        if self.drawer_panes() != self.drawer_shown
             || crate::ui::bar::height(&self.view()) != self.bar_h
         {
             self.apply_layout();
@@ -2271,13 +2344,21 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let sid = self.active.clone().unwrap_or_default();
         let runnable = self.focus != Focus::Sidebar
             && self.runnable.get(&sid).is_some_and(|(l, _)| !l.is_empty());
-        let drawer = self.drawer_shown.is_some();
-        let shellout = self.shells.contains_key(&sid)
-            && (drawer || self.shell_run.get(&sid).is_some_and(|r| r.done.is_some()));
+        let drawer = !self.drawer_shown.is_empty();
+        let mine = self.shells.get(&sid).cloned().unwrap_or_default();
+        let shellout = !mine.is_empty()
+            && (drawer
+                || mine
+                    .iter()
+                    .any(|p| self.shell_run.get(p).is_some_and(|r| r.done.is_some())));
+        let inshell = drawer && self.focus == Focus::Shell;
+        let arrows = !self.cols.is_empty() || (inshell && self.drawer_shown.len() > 1);
         for (name, on) in [
             ("runnable", runnable),
             ("drawer", drawer),
             ("shellout", shellout),
+            ("inshell", inshell),
+            ("arrows", arrows),
         ] {
             if self.flags.get(name) != Some(&on) && self.be.set_flag(name, on).is_ok() {
                 self.flags.insert(name, on);
@@ -3794,9 +3875,21 @@ impl<B: SessionBackend + UiBackend> App<B> {
     fn shell_view(&self) -> Option<crate::view::ShellView> {
         let sid = self.active.as_ref()?;
         let s = self.st.session(sid)?;
-        let has = self.shells.contains_key(sid);
-        let run = self.shell_run.get(sid).cloned().unwrap_or_default();
-        let open = self.drawer_shown.is_some();
+        let mine = self.shells.get(sid).cloned().unwrap_or_default();
+        let has = !mine.is_empty();
+        let current = self.current_shell(sid);
+        let run = current
+            .as_ref()
+            .and_then(|p| self.shell_run.get(p))
+            .filter(|r| r.running.is_some() || r.done.is_some())
+            .or_else(|| {
+                mine.iter()
+                    .filter_map(|p| self.shell_run.get(p))
+                    .find(|r| r.running.is_some() || r.done.is_some())
+            })
+            .cloned()
+            .unwrap_or_default();
+        let open = !self.drawer_shown.is_empty();
         if !has && !open {
             return None;
         }
@@ -3815,6 +3908,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             running: run.running,
             done: run.done,
             resize,
+            count: mine.len(),
+            at: current
+                .and_then(|p| mine.iter().position(|x| *x == p))
+                .map_or(1, |i| i + 1),
         })
     }
 
@@ -4042,6 +4139,7 @@ mod tests {
         fn kill(&self, pane: &str) -> Result<()> {
             self.log.borrow_mut().push(format!("kill {pane}"));
             self.panes.borrow_mut().retain(|p| p.id != pane);
+            self.shell_panes.borrow_mut().retain(|(p, _)| p != pane);
             Ok(())
         }
         fn list(&self) -> Result<Vec<LivePane>> {
@@ -4061,7 +4159,16 @@ mod tests {
             Ok(())
         }
         fn spawn_shell(&self, sid: &str, _: &std::path::Path, _: (u16, u16)) -> Result<String> {
-            let id = format!("%sh-{sid}");
+            let n = self
+                .shell_panes
+                .borrow()
+                .iter()
+                .filter(|(_, s)| s == sid)
+                .count();
+            let id = match n {
+                0 => format!("%sh-{sid}"),
+                n => format!("%sh-{sid}-{n}"),
+            };
             self.shell_panes
                 .borrow_mut()
                 .push((id.clone(), sid.to_string()));
@@ -5238,14 +5345,14 @@ mod tests {
         let sid = a.st.sessions[0].id.clone();
         a.handle_ctl(&["shell".into()]);
         let shell = format!("%sh-{sid}");
-        assert_eq!(a.drawer_shown.as_deref(), Some(shell.as_str()));
+        assert_eq!(a.drawer_shown, vec![shell.clone()]);
         assert_eq!(a.view().focus, Focus::Shell);
         assert!(a.be.log.borrow().iter().any(|l| l.contains("arrange")));
         a.handle_ctl(&["shell".into()]);
         assert_eq!(a.view().focus, Focus::Main);
-        assert!(a.drawer_shown.is_some());
+        assert!(!a.drawer_shown.is_empty());
         a.handle_ctl(&["shell".into()]);
-        assert!(a.drawer_shown.is_none());
+        assert!(a.drawer_shown.is_empty());
 
         a.runnable.insert(
             sid.clone(),
@@ -5256,7 +5363,7 @@ mod tests {
         );
         assert_eq!(a.view().runnable, Some((1, 2)));
         a.handle_ctl(&["run-next".into()]);
-        assert_eq!(a.drawer_shown.as_deref(), Some(shell.as_str()));
+        assert_eq!(a.drawer_shown, vec![shell.clone()]);
         let log = a.be.log.borrow().join("\n");
         assert!(
             log.contains(&format!(
@@ -5277,6 +5384,46 @@ mod tests {
         assert_eq!(a.view().shell.unwrap().resize.unwrap().1, before + 5);
         key(&mut a, Role::Bar, KeyCode::Enter);
         assert_eq!(a.view().focus, Focus::Shell);
+    }
+
+    #[test]
+    fn several_shells_sit_side_by_side_in_the_drawer() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_ctl(&["shell-new".into()]);
+        let first = format!("%sh-{sid}");
+        assert_eq!(a.drawer_shown, vec![first.clone()]);
+        a.handle_ctl(&["shell-new".into()]);
+        let second = format!("%sh-{sid}-1");
+        assert_eq!(a.drawer_shown, vec![first.clone(), second.clone()]);
+        assert_eq!(a.view().focus, Focus::Shell);
+        let sv = a.view().shell.unwrap();
+        assert_eq!((sv.at, sv.count), (2, 2));
+        assert_eq!(a.flags.get("arrows"), Some(&true));
+
+        a.handle_ctl(&["resize".into(), "right".into()]);
+        assert_eq!(a.current_shell(&sid), Some(first.clone()));
+        a.handle_ctl(&["shell-to-claude".into()]);
+        a.set_focus(Focus::Shell);
+        a.handle_ctl(&["resize".into(), "left".into()]);
+        assert_eq!(a.current_shell(&sid), Some(second.clone()));
+        a.handle_ctl(&["run-next".into()]);
+
+        a.be.shell_panes.borrow_mut().retain(|(p, _)| *p != second);
+        a.tick();
+        assert_eq!(a.drawer_shown, vec![first.clone()]);
+        assert_eq!(a.current_shell(&sid), Some(first));
+
+        a.win = (60, 30);
+        a.col_w.clear();
+        a.handle_ctl(&["shell-new".into()]);
+        let out = a.handle_ctl(&["shell-new".into()]);
+        assert!(out.contains("no room"), "{out}");
+
+        a.kill(&CurRef::Session(sid)).unwrap();
+        assert!(a.shells.is_empty());
     }
 
     #[test]

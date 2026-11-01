@@ -1000,6 +1000,8 @@ mod tests {
                 running: running.map(String::from),
                 done: done.map(|(a, b, c)| (a.to_string(), b, c.to_string())),
                 resize,
+                count: 1,
+                at: 1,
             };
         let mut out = String::new();
         let mut line = |v: &View, w: u16| {
@@ -1015,6 +1017,12 @@ mod tests {
         v.focus = Focus::Shell;
         v.runnable = Some((2, 3));
         v.shell = Some(sh(true, None, None, None));
+        line(&v, 120);
+        v.shell = Some(ShellView {
+            count: 3,
+            at: 2,
+            ..sh(true, None, None, None)
+        });
         line(&v, 120);
         v.shell = Some(sh(true, None, None, Some((11, 23))));
         line(&v, 120);

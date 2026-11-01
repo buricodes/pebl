@@ -1057,10 +1057,18 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         if let Some(n) = &next {
             list.push(("alt+r", n.as_str()));
         }
-        list.push(("alt+↑/↓", "resize"));
+        let many = v.shell.as_ref().is_some_and(|s| s.count > 1);
+        list.push(("alt+t", "new shell"));
+        if many {
+            list.push(("alt+←/→", "switch"));
+        }
         list.push(("ctrl+t", "back to Claude"));
         let left = keys(&list);
         let right = match &v.shell {
+            Some(s) if many => vec![
+                segb(format!("shell {} of {}", s.at, s.count), Tok::Fg),
+                seg(format!(" · {}", s.shell), Tok::Mute),
+            ],
             Some(s) => vec![
                 segb("shell", Tok::Fg),
                 seg(" · ", Tok::Dim),

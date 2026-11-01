@@ -54,6 +54,10 @@ pub struct ShellView {
     pub running: Option<String>,
     pub done: Option<(String, bool, String)>,
     pub resize: Option<(u16, u16)>,
+    #[serde(default)]
+    pub count: usize,
+    #[serde(default)]
+    pub at: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
