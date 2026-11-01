@@ -15,7 +15,7 @@ expression: "snap(&v, 120, 40, Main::Stage)"
    ○ a11y-audit            3h │   ctrl+f           search past conversations
                               │   ctrl+x           mark sessions, send one prompt
  ▸ infra                    3 │   ctrl+p           saved prompts and recipes
-                              │   ctrl+q           quit (sessions keep running)
+                              │   ctrl+q · alt+a   quit (sessions keep running) · ask Jel
                               │ columns
                               │   ctrl+\           open a session in a new column
                               │   alt+1 … alt+4    focus a column

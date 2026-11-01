@@ -44,6 +44,7 @@ pub fn run() -> Result<()> {
         timeline: paths::timeline(),
         detect_checks: cfg.checks.unwrap_or(true),
         clipboard: crate::prompts::clipboard,
+        ask: crate::jel::ask_claude,
         sock: sock.clone(),
         editor: crate::config::load(&paths::config())
             .ok()

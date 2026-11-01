@@ -30,8 +30,9 @@ pub fn pet_rows(v: &View, h: u16) -> Option<(u16, u16)> {
     mascot::current(v)?;
     let b = bottom(v, h as i32);
     let full = !matches!(v.layout, Layout::Compact(_));
-    if full && b >= 2 + mascot::CARD_H {
-        Some(((b - mascot::CARD_H) as u16, (b - 1) as u16))
+    let ch = mascot::card_h(v);
+    if full && b >= 2 + ch {
+        Some(((b - ch) as u16, (b - 1) as u16))
     } else {
         let y = (b - 1).max(0) as u16;
         Some((y, y))
@@ -120,9 +121,10 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
     let compact = matches!(v.layout, Layout::Compact(_));
     let top = 1;
     let base = bottom(v, h);
+    let ch = mascot::card_h(v);
     let pet = mascot::current(v).map(|c| {
         let need = top + rows.len() as i32;
-        if !compact && w >= 24 && need < base - mascot::CARD_H {
+        if !compact && w >= 24 && need < base - ch {
             (c, Pet::Card)
         } else if need < base {
             (c, Pet::Line)
@@ -131,7 +133,7 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
         }
     });
     let limit = match pet {
-        Some((_, Pet::Card)) => base - mascot::CARD_H - 1,
+        Some((_, Pet::Card)) => base - ch - 1,
         Some((_, Pet::Line)) => base - 1,
         _ => base,
     };
@@ -312,11 +314,11 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
 
     match pet {
         Some((c, Pet::Card)) => {
-            let ry = base - mascot::CARD_H - 1;
+            let ry = base - mascot::card_h(v) - 1;
             p.hl(0, ry, w);
-            mascot::card(p, c, &v.notice, frame, 1, ry + 1, w);
+            mascot::card(p, c, v, frame, 1, ry + 1, w);
         }
-        Some((c, Pet::Line)) => mascot::compact(p, c, &v.notice, frame, 1, base - 1, w),
+        Some((c, Pet::Line)) => mascot::compact(p, c, v, frame, 1, base - 1, w),
         _ => {}
     }
     if usage_h(v) > 0 {

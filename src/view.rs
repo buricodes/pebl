@@ -25,6 +25,8 @@ pub struct View {
     #[serde(default)]
     pub notice: Notice,
     #[serde(default)]
+    pub tip: Option<TipView>,
+    #[serde(default)]
     pub columns: Vec<ColumnTab>,
     #[serde(default)]
     pub col_focus: usize,
@@ -44,6 +46,14 @@ pub struct View {
     pub runnable: Option<(usize, usize)>,
     #[serde(default)]
     pub update: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TipView {
+    pub key: String,
+    pub text: String,
+    pub at: usize,
+    pub total: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -253,6 +263,20 @@ pub enum Mode {
         count: usize,
     },
     Broadcast(Broadcast),
+    Ask(AskView),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AskView {
+    pub rows: Vec<AskRow>,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AskRow {
+    pub question: String,
+    pub answer: Option<String>,
+    pub act: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

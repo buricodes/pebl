@@ -141,6 +141,7 @@ pub struct Keys {
     pub shell: String,
     pub prompts: String,
     pub inbox: String,
+    pub ask: String,
 }
 
 impl Default for Keys {
@@ -161,6 +162,7 @@ impl Default for Keys {
             shell: "C-t".into(),
             prompts: "C-p".into(),
             inbox: "C-y".into(),
+            ask: "M-a".into(),
         }
     }
 }
@@ -182,6 +184,7 @@ impl Keys {
             (self.shell.as_str(), "shell"),
             (self.prompts.as_str(), "prompts"),
             (self.inbox.as_str(), "inbox"),
+            (self.ask.as_str(), "ask"),
         ]
         .into_iter()
         .filter(|(k, _)| !k.is_empty())

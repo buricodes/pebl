@@ -2,7 +2,7 @@ use super::theme::Tok;
 use super::{keys, len, seg, seg_len, segb, Painter, Seg};
 use crate::model::TaskState;
 use crate::view::{
-    Broadcast, CheckBadge, Clip, CompareView, Finish, InboxView, Layout, Mode, NameFrom,
+    AskView, Broadcast, CheckBadge, Clip, CompareView, Finish, InboxView, Layout, Mode, NameFrom,
     NewProject, NoticeKind, Peek, PlanView, PromptStep, PromptsView, QueueView, SearchView, View,
 };
 
@@ -22,6 +22,7 @@ pub fn height(v: &View) -> u16 {
         Mode::Peek(pk) => pk.lines.len() as u16 + 5,
         Mode::Broadcast(b) => broadcast_rows(b) as u16 + 2,
         Mode::Inbox(iv) => inbox_rows(iv) as u16 + 3,
+        Mode::Ask(av) => 2 * ask_shown(av, v.layout.short_keys()) as u16 + 5,
         Mode::Queue(qv) => queue_rows(qv) as u16 + 3,
         Mode::Plan(pv) => pv.rows.len() as u16 + u16::from(pv.more > 0) + 3,
         Mode::Compare(cv) => cv.rows.len().max(1) as u16 + 4 + u16::from(cv.confirm),
@@ -77,6 +78,13 @@ pub fn render(v: &View, p: &mut Painter) {
     }
     if let Mode::Compare(cv) = &v.mode {
         compare(cv, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Ask(av) = &v.mode {
+        ask(av, p, v.layout.short_keys());
         if h >= 2 {
             let w = p.w();
             p.hl(0, h - 2, w);
@@ -589,6 +597,96 @@ fn compare(cv: &CompareView, p: &mut Painter) {
     }
 }
 
+fn ask_shown(av: &AskView, short: bool) -> usize {
+    av.rows.len().min(if short { 1 } else { 3 })
+}
+
+fn ask(av: &AskView, p: &mut Painter, short: bool) {
+    let w = p.w();
+    p.t(1, 0, "▐", Tok::Acc, false);
+    p.t(2, 0, "O", Tok::Ink, true);
+    p.bg(2, 0, 1, Tok::Acc);
+    p.t(3, 0, "▌", Tok::Acc, false);
+    let x = p.segs(5, 0, &[segb("Ask jel", Tok::Fg)]);
+    if !short {
+        p.t(x, 0, "  one line, always", Tok::Dim, false);
+        p.rt(
+            w - 1,
+            0,
+            "answers can include a key to act on",
+            Tok::Dim,
+            false,
+        );
+    }
+    let shown = ask_shown(av, short);
+    let rows = &av.rows[av.rows.len() - shown..];
+    for (i, r) in rows.iter().enumerate() {
+        let y = 2 + 2 * i as i32;
+        let last = i + 1 == rows.len();
+        let room = (w - 7).max(1) as usize;
+        if last {
+            p.segs(
+                3,
+                y,
+                &[
+                    segb("? ", Tok::Acc),
+                    seg(super::fit(&r.question, room), Tok::Fg),
+                ],
+            );
+        } else {
+            p.segs(
+                3,
+                y,
+                &[
+                    seg("? ", Tok::Dim),
+                    seg(super::fit(&r.question, room), Tok::Mute),
+                ],
+            );
+        }
+        let mut line = if last {
+            vec![seg("› ", Tok::Acc)]
+        } else {
+            Vec::new()
+        };
+        match (&r.answer, last) {
+            (None, _) => line.push(seg("thinking…", Tok::Dim)),
+            (Some(a), true) => {
+                let tail: Vec<Seg> = match &r.act {
+                    Some(act) => vec![
+                        seg("  ·  ", Tok::Dim),
+                        segb("enter", Tok::Acc),
+                        seg(format!(" {act}"), Tok::Mute),
+                    ],
+                    None => Vec::new(),
+                };
+                let room = room.saturating_sub(seg_len(&tail)).max(8);
+                line.push(seg(super::fit(a, room), Tok::Fg));
+                line.extend(tail);
+            }
+            (Some(a), false) => line.push(seg(super::fit(a, room), Tok::Mute)),
+        }
+        p.segs(5, y + 1, &line);
+    }
+    let y = 2 + 2 * shown as i32;
+    let x = p.segs(3, y, &[seg("> ", Tok::Fg)]);
+    let e = p.t(
+        x,
+        y,
+        &fit_left(&av.text, (w - x - 2).max(1) as usize),
+        Tok::Fg,
+        false,
+    );
+    p.caret(e, y);
+    if av.text.is_empty() {
+        let hint = if av.rows.is_empty() {
+            "  how do I…? what is waiting? which chat…?"
+        } else {
+            "  ask another, or esc"
+        };
+        p.t(e + 1, y, hint, Tok::Dim, false);
+    }
+}
+
 fn inbox_rows(iv: &InboxView) -> usize {
     iv.rows.len().max(1) + usize::from(iv.more > 0)
 }
@@ -1000,12 +1098,13 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
             s.0 = fit_left(&s.0, len(&s.0).saturating_sub(over));
         }
     }
-    let keep = left.len() >= 4 && left[left.len() - 2].0 == "?";
-    let tail = if keep {
-        left.split_off(left.len() - 3)
-    } else {
-        Vec::new()
-    };
+    let mut cut = left.len();
+    for key in ["?", "alt+a"] {
+        if cut >= 4 && left[cut - 2].0 == key {
+            cut -= 3;
+        }
+    }
+    let tail = left.split_off(cut);
     let room = (p.w().max(0) as usize).saturating_sub(seg_len(&right) + seg_len(&tail) + 3);
     while seg_len(&left) > room && left.len() > 1 {
         while let Some(s) = left.pop() {
@@ -1212,6 +1311,15 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ("w", "pick winner"),
             ("esc", "back"),
         ]),
+        Mode::Ask(av) => {
+            let act = av.text.is_empty() && av.rows.last().is_some_and(|r| r.act.is_some());
+            let mut list = vec![("enter", if act { "do it" } else { "ask" })];
+            if !av.rows.is_empty() {
+                list.push(("↑", if short { "prev" } else { "previous" }));
+            }
+            list.push(("esc", "close"));
+            keys(&list)
+        }
         Mode::Inbox(iv) if iv.rows.is_empty() => keys(&[("esc", "close")]),
         Mode::Inbox(_) if short => keys(&[("enter", "open"), ("p", "peek"), ("esc", "close")]),
         Mode::Inbox(_) => keys(&[
@@ -1334,7 +1442,7 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 .hints
                 .iter()
                 .enumerate()
-                .filter(|(i, (k, _))| !short || *i < 3 || k == "?")
+                .filter(|(i, (k, _))| !short || *i < 3 || k == "?" || k == "alt+a")
                 .map(|(_, (k, l))| {
                     let k = if short {
                         k.replace("ctrl+", "^")

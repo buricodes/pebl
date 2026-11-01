@@ -143,7 +143,7 @@ fn run_loop(role: Role) -> Result<()> {
                         y: m.row,
                     })
                 } else if pet {
-                    let _ = crate::ipc::ctl(&paths::sock(), &["waiting".into()]);
+                    let _ = crate::ipc::ctl(&paths::sock(), &["pet".into()]);
                     None
                 } else if m.row + 2 == h {
                     Some(Input::Key(Key::plain(KeyCode::Char('n'))))

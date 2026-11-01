@@ -349,6 +349,80 @@ mod tests {
         insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
     }
 
+    fn tip() -> crate::view::TipView {
+        crate::view::TipView {
+            key: "ctrl+x".into(),
+            text: "marks many chats, one prompt to all".into(),
+            at: 9,
+            total: 18,
+        }
+    }
+
+    #[test]
+    fn jel_gives_tips() {
+        let mut v = base();
+        v.mascot = Some("jel".into());
+        v.tip = Some(tip());
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn jel_tip_compact() {
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.projects.truncate(1);
+        v.mascot = Some("jel".into());
+        v.tip = Some(tip());
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    fn ask_view() -> crate::view::AskView {
+        let row = |q: &str, a: Option<&str>, act: Option<&str>| crate::view::AskRow {
+            question: q.into(),
+            answer: a.map(String::from),
+            act: act.map(String::from),
+        };
+        crate::view::AskView {
+            rows: vec![
+                row(
+                    "what is e2e-tests stuck on?",
+                    Some("3 specs time out waiting for network idle"),
+                    None,
+                ),
+                row(
+                    "how do I run two terminals?",
+                    Some("Open the shell with ctrl+t, then click + split"),
+                    Some("opens a shell"),
+                ),
+                row("which chat is waiting on me?", None, None),
+            ],
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn ask_jel_strip() {
+        let t = transcript();
+        let mut v = base();
+        let mut av = ask_view();
+        av.rows.pop();
+        v.mode = Mode::Ask(av);
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn ask_jel_strip_minimum() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Ask(ask_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
     #[test]
     fn mascot_compact() {
         let mut v = base();

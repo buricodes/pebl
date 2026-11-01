@@ -1,8 +1,16 @@
 use super::theme::Tok;
 use super::{fit, len, seg, segb, Painter, Seg};
-use crate::view::{Notice, NoticeKind, View};
+use crate::view::{Notice, NoticeKind, TipView, View};
 
 pub const CARD_H: i32 = 4;
+const TIP_LINES: i32 = 2;
+
+pub fn card_h(v: &View) -> i32 {
+    match v.tip {
+        Some(_) => CARD_H + TIP_LINES,
+        None => CARD_H,
+    }
+}
 pub const TEXT_X: i32 = 11;
 
 pub const MOODS: [NoticeKind; 5] = [
@@ -184,9 +192,18 @@ pub fn pose(k: NoticeKind, f: u64) -> Pose {
 }
 
 pub fn art(p: &mut Painter, c: &Character, k: NoticeKind, f: u64, x: i32, y: i32) {
-    let pose = pose(k, f);
-    let tok = tone(k);
-    let bold = k == NoticeKind::Waiting;
+    draw(p, c, pose(k, f), tone(k), k == NoticeKind::Waiting, x, y);
+}
+
+fn tip_pose(f: u64) -> Pose {
+    Pose {
+        eye: '•',
+        mark: ' ',
+        ..pose(NoticeKind::Working, f)
+    }
+}
+
+fn draw(p: &mut Painter, c: &Character, pose: Pose, tok: Tok, bold: bool, x: i32, y: i32) {
     for (i, line) in (c.art)(pose).iter().enumerate() {
         let yy = y + i as i32;
         if !c.solid {
@@ -274,7 +291,57 @@ fn fit_segs(segs: &[Seg], w: usize) -> Vec<Seg> {
     out
 }
 
-pub fn card(p: &mut Painter, c: &Character, n: &Notice, f: u64, x: i32, y: i32, w: i32) {
+fn wrap(text: &str, w: usize, lines: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let join = out.last().is_some_and(|l| len(l) + 1 + len(word) <= w) || out.len() == lines;
+        match out.last_mut() {
+            Some(l) if join => {
+                l.push(' ');
+                l.push_str(word);
+            }
+            _ => out.push(word.to_string()),
+        }
+    }
+    out.iter().map(|l| fit(l, w)).collect()
+}
+
+pub fn ask_hint(short: bool) -> Vec<Seg> {
+    vec![
+        seg(if short { "M-a" } else { "alt+a" }, Tok::Fg),
+        seg(" ask jel", Tok::Dim),
+    ]
+}
+
+fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, x: i32, y: i32, w: i32) {
+    draw(p, c, tip_pose(f), Tok::Mute, false, x, y);
+    let tw = (w - x - TEXT_X).max(0) as usize;
+    let beside = [
+        vec![segb(t.key.clone(), Tok::Acc)],
+        vec![
+            seg("tip", Tok::Mute),
+            seg(format!(" · {}/{}", t.at, t.total), Tok::Dim),
+        ],
+        Vec::new(),
+        ask_hint(false),
+    ];
+    for (i, line) in beside.iter().enumerate() {
+        p.segs(x + TEXT_X, y + i as i32, &fit_segs(line, tw));
+    }
+    let bw = (w - x - 1).max(1) as usize;
+    for (i, line) in wrap(&t.text, bw, TIP_LINES as usize).iter().enumerate() {
+        p.t(x, y + CARD_H + i as i32, line, Tok::Fg, false);
+    }
+}
+
+pub fn card(p: &mut Painter, c: &Character, v: &View, f: u64, x: i32, y: i32, w: i32) {
+    match &v.tip {
+        Some(t) => tip_card(p, c, t, f, x, y, w),
+        None => notice_card(p, c, &v.notice, f, x, y, w),
+    }
+}
+
+fn notice_card(p: &mut Painter, c: &Character, n: &Notice, f: u64, x: i32, y: i32, w: i32) {
     art(p, c, n.kind, f, x, y);
     let tw = (w - x - TEXT_X).max(0) as usize;
     for (i, line) in message(n, false).iter().enumerate() {
@@ -282,9 +349,12 @@ pub fn card(p: &mut Painter, c: &Character, n: &Notice, f: u64, x: i32, y: i32, 
     }
 }
 
-pub fn compact(p: &mut Painter, c: &Character, n: &Notice, f: u64, x: i32, y: i32, w: i32) {
-    let pose = pose(n.kind, f);
-    let tok = tone(n.kind);
+pub fn compact(p: &mut Painter, c: &Character, v: &View, f: u64, x: i32, y: i32, w: i32) {
+    let n = &v.notice;
+    let (pose, tok) = match v.tip {
+        Some(_) => (tip_pose(f), Tok::Mute),
+        None => (pose(n.kind, f), tone(n.kind)),
+    };
     let mut xx = x;
     if c.solid {
         p.t(xx, y, "▐", tok, false);
@@ -295,6 +365,15 @@ pub fn compact(p: &mut Painter, c: &Character, n: &Notice, f: u64, x: i32, y: i3
     } else {
         let face = (c.art)(pose)[1].trim().to_string();
         xx = p.t(xx, y, &face, tok, true);
+    }
+    if let Some(t) = &v.tip {
+        let segs = [
+            seg(" ", Tok::Fg),
+            segb(t.key.clone(), Tok::Acc),
+            seg(format!(" {}", t.text), Tok::Mute),
+        ];
+        p.segs(xx, y, &fit_segs(&segs, (w - xx).max(0) as usize));
+        return;
     }
     let segs: Vec<Seg> = match n.kind {
         NoticeKind::Idle => vec![seg(" all quiet", Tok::Mute)],

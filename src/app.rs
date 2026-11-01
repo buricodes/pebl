@@ -1,3 +1,4 @@
+mod ask_jel;
 mod attention;
 mod auto_checks;
 mod hints;
@@ -113,6 +114,10 @@ enum IMode {
         confirm: bool,
     },
     DrawerResize,
+    Ask {
+        text: String,
+        back: usize,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -156,6 +161,7 @@ pub struct Env {
     pub timeline: PathBuf,
     pub detect_checks: bool,
     pub clipboard: fn() -> Option<String>,
+    pub ask: fn(&str, &str, &str) -> Result<String>,
     pub notify: crate::config::Notify,
 }
 
@@ -225,6 +231,9 @@ pub struct App<B: SessionBackend + UiBackend> {
     reviewers: HashMap<String, String>,
     sent: HashMap<String, Instant>,
     snapshots: replay::Snapshots,
+    asked: Vec<ask_jel::Asked>,
+    ask_seq: u64,
+    answers: ask_jel::Answers,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -329,6 +338,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             reviewers: HashMap::new(),
             sent: HashMap::new(),
             snapshots: Default::default(),
+            asked: Vec::new(),
+            ask_seq: 0,
+            answers: Default::default(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -388,6 +400,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     pub fn handle_ctl(&mut self, args: &[String]) -> String {
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Some(first) = a.first() {
+            self.note_use(first);
+        }
         let res = match a.as_slice() {
             ["ensure-ui", cwd, w, h, color] => {
                 self.ensure_ui(cwd, w, h, color).map(|_| "ok".into())
@@ -418,6 +433,15 @@ impl<B: SessionBackend + UiBackend> App<B> {
             ["next"] => self.cycle(1).map(|_| String::new()),
             ["prev"] => self.cycle(-1).map(|_| String::new()),
             ["waiting"] => self.jump_waiting().map(|_| String::new()),
+            ["ask"] => {
+                self.start_ask();
+                Ok(String::new())
+            }
+            ["pet"] if self.attention().is_empty() => {
+                self.start_ask();
+                Ok(String::new())
+            }
+            ["pet"] => self.jump_waiting().map(|_| String::new()),
             ["new-session"] => self.start_new_session(false).map(|_| String::new()),
             ["new-project"] => {
                 self.start_new_project();
@@ -755,6 +779,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
         self.refresh_shells();
         self.collect_checks();
+        self.collect_answers();
         self.collect_snapshots();
         self.run_queue();
         self.collect_reviews();
@@ -1333,6 +1358,31 @@ impl<B: SessionBackend + UiBackend> App<B> {
             let n = self.osc.as_ref().map_or(1, |(n, _)| n + 1);
             self.osc = Some((n, text));
         }
+    }
+
+    fn note_use(&mut self, feature: &str) {
+        if crate::tips::tracks(feature) && !self.st.used.contains(feature) {
+            self.st.used.insert(feature.to_string());
+        }
+    }
+
+    fn tip(&self, counts: &Counts) -> Option<crate::view::TipView> {
+        if self.muted || self.mascot.is_none() {
+            return None;
+        }
+        if !matches!(
+            self.notice(counts).kind,
+            NoticeKind::Idle | NoticeKind::Working
+        ) {
+            return None;
+        }
+        let (i, t) = crate::tips::pick(&self.st.used, now());
+        Some(crate::view::TipView {
+            key: t.key.into(),
+            text: t.text.into(),
+            at: i + 1,
+            total: crate::tips::TIPS.len(),
+        })
     }
 
     fn notice(&self, counts: &Counts) -> Notice {
@@ -2049,6 +2099,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 | IMode::Queue { .. }
                 | IMode::Compare { .. }
                 | IMode::Plan { .. }
+                | IMode::Ask { .. }
         ) {
             self.mode = IMode::Normal;
             self.apply_layout();
@@ -3133,6 +3184,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let IMode::Broadcast { marks, text } = self.mode.clone() {
             return self.broadcast_key(marks, text, k);
         }
+        if let IMode::Ask { text, back } = self.mode.clone() {
+            return self.ask_key(text, back, k);
+        }
         if let IMode::Prompts(pk) = self.mode.clone() {
             return self.prompts_key(pk, k);
         }
@@ -3161,6 +3215,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             return Ok(());
         }
         match self.mode.clone() {
+            IMode::Ask { .. } => Ok(()),
             IMode::Mark { marks } => self.mark_key(marks, k),
             IMode::DrawerResize => {
                 let step = if k.shift { 5 } else { 1 };
@@ -3428,6 +3483,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.set_focus(Focus::Main);
             }
             return Ok(());
+        }
+        if let Char(c) = k.code {
+            self.note_use(&format!("key {c}"));
         }
         match k.code {
             Char('J') => self.move_project(1)?,
@@ -3793,6 +3851,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             IMode::Mark { marks } => Mode::Mark { count: marks.len() },
             IMode::Prompts(pk) => Mode::Prompts(self.prompts_view(pk)),
             IMode::Inbox { sel } => Mode::Inbox(self.inbox_view(*sel)),
+            IMode::Ask { text, .. } => Mode::Ask(self.ask_view(text)),
             IMode::Queue {
                 pid,
                 sel,
@@ -3889,6 +3948,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.mascot.clone()
             },
             notice: self.notice(&counts),
+            tip: self.tip(&counts),
             columns: self.tabs(),
             col_focus: self.col,
             resizing: self.resize_divider(),
@@ -4325,6 +4385,13 @@ mod tests {
             timeline: std::env::temp_dir()
                 .join(format!("pebl-test-timeline-{}", std::process::id())),
             clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
+            ask: |_, system, q| {
+                assert!(system.contains("ctrl+t"));
+                Ok(match q {
+                    "two terminals?" => "Open the shell, then click + split. [do:shell]".into(),
+                    _ => "a is waiting on you [go:a]".into(),
+                })
+            },
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
                 phone_after: 0,
@@ -5306,6 +5373,57 @@ mod tests {
     }
 
     #[test]
+    fn jel_tips_and_answers_with_an_action() {
+        let (mut a, d) = app();
+        a.mascot = Some("jel".into());
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let first = a.view().tip.unwrap();
+        a.handle_ctl(&[crate::tips::TIPS[first.at - 1].feature.into()]);
+        assert_ne!(a.view().tip.unwrap().at, first.at);
+
+        a.handle_ctl(&["pet".into()]);
+        assert!(matches!(a.view().mode, Mode::Ask(_)));
+        typ_role(&mut a, Role::Bar, "two terminals?");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let answered = |a: &mut App<Fake>| {
+            for _ in 0..200 {
+                a.collect_answers();
+                if let Mode::Ask(av) = a.view().mode {
+                    if av.rows.last().is_some_and(|r| r.answer.is_some()) {
+                        return av;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("no answer")
+        };
+        let av = answered(&mut a);
+        assert_eq!(
+            av.rows[0].answer.as_deref(),
+            Some("Open the shell, then click + split.")
+        );
+        assert_eq!(av.rows[0].act.as_deref(), Some("opens a shell"));
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.view().mode, Mode::Normal);
+        assert!(!a.drawer_shown.is_empty());
+
+        a.handle_ctl(&["ask".into()]);
+        key(&mut a, Role::Bar, KeyCode::Up);
+        let Mode::Ask(av) = a.view().mode else {
+            panic!()
+        };
+        assert_eq!(av.text, "two terminals?");
+        key(&mut a, Role::Bar, KeyCode::Down);
+        typ_role(&mut a, Role::Bar, "where?");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        answered(&mut a);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.view().active.unwrap().session, "a");
+        assert_eq!(a.view().focus, Focus::Main);
+    }
+
+    #[test]
     fn hints_follow_what_is_selected() {
         let (mut a, d) = app();
         a.handle_ctl(&["add".into(), d.path().display().to_string()]);
@@ -5318,17 +5436,18 @@ mod tests {
         };
         a.set_focus(Focus::Sidebar);
         a.cursor = Some(CurRef::Session(ids[0].clone()));
-        assert_eq!(keys_of(&a), vec!["d", "R", "H", "c", "?"]);
+        assert_eq!(keys_of(&a), vec!["d", "R", "H", "c", "alt+a", "?"]);
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         assert_eq!(a.view().hints[0], ("enter".into(), "answer it".into()));
-        assert_eq!(keys_of(&a).len(), 6);
+        assert_eq!(keys_of(&a).len(), 7);
         assert_eq!(a.view().hints[1].0, "p");
         assert_eq!(keys_of(&a).last().unwrap(), "?");
         a.cursor = Some(CurRef::Project(a.st.projects[0].id.clone()));
-        assert_eq!(keys_of(&a), vec!["ctrl+n", "q", "N", "space", "?"]);
+        assert_eq!(keys_of(&a), vec!["ctrl+n", "q", "N", "space", "alt+a", "?"]);
         a.set_focus(Focus::Main);
         assert_eq!(a.view().hints[0], ("ctrl+p".into(), "prompts".into()));
         assert!(!keys_of(&a).contains(&"?".to_string()));
+        assert_eq!(keys_of(&a).last().unwrap(), "alt+a");
     }
 
     #[test]

@@ -17,6 +17,7 @@ impl Hints {
     }
 
     fn done(mut self) -> Vec<(String, String)> {
+        self.0.push(("alt+a".into(), "ask jel".into()));
         self.0.push(("?".into(), "all keys".into()));
         self.0
     }
@@ -98,6 +99,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         h.add("ctrl+t", "shell");
         h.add("ctrl+space", "sidebar");
         h.add("ctrl+j/k", "switch");
+        h.0.push(("alt+a".into(), "ask jel".into()));
         h.0
     }
 }

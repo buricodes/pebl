@@ -159,6 +159,16 @@ fn new_session(v: &View, p: &mut Painter, cwd: &str) {
     }
 }
 
+pub fn help_text() -> String {
+    HELP.iter()
+        .flat_map(|(title, rows)| {
+            std::iter::once(format!("{title}:"))
+                .chain(rows.iter().map(|(k, d)| format!("  {k}: {d}")))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "anywhere, even inside Claude",
@@ -171,7 +181,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("ctrl+f", "search past conversations"),
             ("ctrl+x", "mark sessions, send one prompt"),
             ("ctrl+p", "saved prompts and recipes"),
-            ("ctrl+q", "quit (sessions keep running)"),
+            ("ctrl+q · alt+a", "quit (sessions keep running) · ask Jel"),
         ],
     ),
     (

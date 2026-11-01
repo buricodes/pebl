@@ -58,6 +58,8 @@ pub struct State {
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub next_id: u64,
+    #[serde(default)]
+    pub used: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
