@@ -20,7 +20,7 @@ pub fn run(role: Role) -> Result<()> {
     terminal::enable_raw_mode()?;
     let mut out = std::io::stdout();
     execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;
-    let mouse = matches!(role, Role::Sidebar | Role::Tabs);
+    let mouse = matches!(role, Role::Sidebar | Role::Tabs | Role::Bar);
     if mouse {
         execute!(out, event::EnableMouseCapture)?;
     }
@@ -128,11 +128,14 @@ fn run_loop(role: Role) -> Result<()> {
                     .and_then(|v| sidebar::pet_rows(v, h))
                     .is_some_and(|(a, b)| m.row >= a && m.row <= b);
                 let w = term.size().map(|s| s.width).unwrap_or(0);
-                let button = (role == Role::Bar && m.row + 1 == h)
-                    .then(|| view.as_ref().and_then(|v| bar::button_at(v, w, m.column)))
-                    .flatten();
-                if let Some(action) = button {
-                    let _ = crate::ipc::ctl(&paths::sock(), &[action.into()]);
+                if role == Role::Bar {
+                    let button = view
+                        .as_ref()
+                        .filter(|_| m.row + 1 == h)
+                        .and_then(|v| bar::button_at(v, w, m.column));
+                    if let Some(action) = button {
+                        let _ = crate::ipc::ctl(&paths::sock(), &[action.into()]);
+                    }
                     None
                 } else if role == Role::Tabs {
                     Some(Input::Click {

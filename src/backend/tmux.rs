@@ -793,6 +793,9 @@ pub fn config(pebl: &str, truecolor: bool, cfg: &crate::config::Config) -> Strin
         c.push_str("set -as terminal-features ',*:RGB'\n");
     }
     c.push_str("bind -n S-Enter if -F '#{@pebl_sid}' 'send-keys M-Enter' 'send-keys Enter'\n");
+    c.push_str(
+        "bind -n MouseDown1Pane if -F -t = '#{==:#{@pebl_role},bar}' { send-keys -M } { select-pane -t = ; send-keys -M }\n",
+    );
     if let Some(bg) = cfg.background() {
         let bg = sh_quote(bg);
         c.push_str(&format!(
