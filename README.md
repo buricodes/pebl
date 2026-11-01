@@ -1,8 +1,20 @@
+<p align="center">
+  <img src="docs/img/hero.png" alt="pebl: every Claude Code session in one terminal, and a jellyfish" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://getpebl.vercel.app">Website</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#use">Use</a> ·
+  <a href="#jel-the-jellyfish">Meet Jel</a> ·
+  <a href="https://github.com/buricodes/pebl/releases/latest">Latest release</a>
+</p>
+
 # pebl
 
 Run several Claude Code sessions side by side in one terminal window, and see at a glance which ones need you.
 
-pebl is a terminal-native orchestrator for Claude Code: a project sidebar on the left, the real `claude` on the right, a status bar at the bottom. There's no Electron and no browser tab. The main pane is Claude Code itself, untouched.
+pebl is a terminal-native orchestrator for Claude Code: a project sidebar on the left, the real `claude` on the right, a status bar at the bottom. There's no Electron and no browser tab. The main pane is Claude Code itself, untouched. And at the bottom of the sidebar lives Jel, a jellyfish who pokes you the moment a session needs a yes, and answers questions about pebl when you click it.
 
 ```
  projects                   3 │ nova-api / auth-refactor                     ● running · 2m
@@ -15,6 +27,12 @@ pebl is a terminal-native orchestrator for Claude Code: a project sidebar on the
  ▾ billing-svc              3 │
    ● onboarding-flow      14s │
    ✕ e2e-tests         exit 1 │
+                              │
+──────────────────────────────│
+   ▄▆██▆▄ ! ◆ migrate-staging │
+   █O██O█   wants to run Bash │
+   ▌▐ ▌▐    ctrl+g · 1 more   │
+   ▘ ▝▘ ▝                     │
                               │
  + new session         ctrl+n │
  + new project         ctrl+o │
@@ -278,15 +296,25 @@ Each session row in the sidebar has a one cell gauge (▁ to █) for how full i
 
 The numbers come from a small statusline that pebl gives each session (`pebl statusline`), which also prints a grey line under Claude's input box with the same figures. Set `statusline = false` in `~/.pebl/config.toml` to turn it off; the gauges and plan usage go with it.
 
-## Mascot
+## Jel the jellyfish
 
-The bottom of the sidebar holds a mascot that works as a notification line. Its face and colour show the most urgent state across all sessions (needs you › error › finished › working › idle) and the text beside it names the session, what it wants, and the key to act on it. `ctrl+g` (or clicking it) goes straight there. In a short or narrow sidebar it shrinks to a one-line face; `m` mutes it along with the bell.
+<img src="docs/img/jel.svg" alt="Jel, pebl's jellyfish, drifting" width="96" align="right">
 
-When every session is idle, Jel shows a tip every 10 seconds, starting with features you haven't used yet.
+Jel lives at the bottom of the sidebar and works as your notification line. Its face and colour show the most urgent state across all sessions (needs you › error › finished › working › idle) and the text beside it names the session, what it wants, and the key to act on it. `ctrl+g` (or clicking it) goes straight there. In a short or narrow sidebar it shrinks to a one-line face; `m` mutes it along with the bell.
 
-**Ask Jel.** Click Jel (or `ask jel` in the status bar, or press `alt+a`) and ask anything about pebl or your sessions: "how do I run two terminals?", "which chat is waiting on me?". It answers in one line using your own Claude Code (`claude -p` with Haiku, so no API key, and a little of your plan per question), from a guide built into pebl ([docs/JEL.md](docs/JEL.md)) and your live sessions. When the answer is something pebl can do, `enter` does it.
+| Jel looks like | What's going on |
+|---|---|
+| eyes wide open, `!` blinking, orange | a session needs you: Jel names it and what it wants |
+| tentacles drifting, a spinner beside it | sessions are working |
+| happy `^` eyes, green | a session finished while you weren't looking |
+| `x` eyes, red | a session stopped with an error |
+| eyes shut, `z` `Z` | everything is idle (Jel shows tips then, see below) |
 
-The default is Jel the jellyfish. Run `pebl mascots` to see the others (pebl, shroom, toast, nib, hoot) in every mood and pick one, or `o` there to turn it off.
+**Tips.** When every session is idle, Jel shows a tip every 10 seconds, starting with features you haven't used yet, so you find things like `+ split` or the task queue without reading this page.
+
+**Ask Jel.** When nothing needs you, click Jel (or `ask jel` in the status bar, or press `alt+a`) and ask anything about pebl or your sessions: "how do I run two terminals?", "which chat is waiting on me?". It answers in one line using your own Claude Code (`claude -p` with Haiku, so no API key, and a little of your plan per question), from a guide built into pebl ([docs/JEL.md](docs/JEL.md)) and your live sessions. When the answer is something pebl can do, `enter` does it.
+
+Jel is the default. Run `pebl mascots` to see the others (pebl, shroom, toast, nib, hoot) in every mood and pick one, or `o` there to turn it off.
 
 ## Configure
 
