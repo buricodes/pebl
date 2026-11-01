@@ -5378,9 +5378,11 @@ mod tests {
         a.mascot = Some("jel".into());
         a.handle_ctl(&["add".into(), d.path().display().to_string()]);
         a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
-        let first = a.view().tip.unwrap();
-        a.handle_ctl(&[crate::tips::TIPS[first.at - 1].feature.into()]);
-        assert_ne!(a.view().tip.unwrap().at, first.at);
+        assert!(a.view().tip.is_some());
+        a.handle_ctl(&["inbox".into()]);
+        a.handle_ctl(&["inbox".into()]);
+        assert!(a.st.used.contains("inbox"));
+        assert!(!a.st.used.contains("next"));
 
         a.handle_ctl(&["pet".into()]);
         assert!(matches!(a.view().mode, Mode::Ask(_)));
