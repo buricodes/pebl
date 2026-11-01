@@ -1,5 +1,6 @@
 mod app;
 mod backend;
+mod checks;
 mod client;
 mod complete;
 mod config;
@@ -10,14 +11,24 @@ mod git;
 mod history;
 mod hotkey;
 mod ipc;
+mod jel;
+mod memory;
 mod model;
 mod notify;
 mod paths;
+mod popup;
+mod project;
+mod prompts;
+mod queue;
+mod recipes;
 mod review;
 mod search;
 mod status;
 mod store;
 mod telemetry;
+mod timeline;
+mod timeline_view;
+mod tips;
 mod ui;
 mod update;
 mod view;
@@ -57,6 +68,23 @@ enum Cmd {
     },
     #[command(about = "List sessions with status (tab separated)")]
     Ls,
+    #[command(
+        about = "Show the checks pebl runs after each turn in a project, and where to change them"
+    )]
+    Checks {
+        #[arg(help = "Project folder (default: the current directory)")]
+        path: Option<std::path::PathBuf>,
+    },
+    #[command(about = "Multi-step workflows that run on their own, step after step")]
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeCmd,
+    },
+    #[command(about = "Queue tasks that run in their own worktrees, a few at a time")]
+    Queue {
+        #[command(subcommand)]
+        action: QueueCmd,
+    },
     #[command(about = "Check tmux, claude and the hook setup")]
     Doctor,
     #[command(about = "Bring pebl to the front, or open it in a new terminal window")]
@@ -112,11 +140,74 @@ enum Cmd {
         color: String,
     },
     #[command(hide = true)]
+    Timeline {
+        #[arg(long)]
+        sid: String,
+        #[arg(long, default_value = "")]
+        title: String,
+        #[arg(long, default_value = "truecolor")]
+        color: String,
+    },
+    #[command(hide = true)]
     Daemon,
     #[command(hide = true)]
     View { role: String },
     #[command(hide = true)]
     Ctl { args: Vec<String> },
+}
+
+#[derive(Subcommand)]
+enum RecipeCmd {
+    #[command(about = "List your recipes and the current project's shared ones")]
+    Ls,
+    #[command(about = "Install a recipe from a .toml file or a URL")]
+    Add { source: String },
+    #[command(about = "Run a recipe as a queued task in a new worktree")]
+    Run {
+        name: String,
+        #[arg(
+            long,
+            short,
+            help = "Project name or path (default: the selected project)"
+        )]
+        project: Option<String>,
+        #[arg(
+            long = "var",
+            short,
+            help = "A value for a {{placeholder}}, as name=value"
+        )]
+        vars: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum QueueCmd {
+    #[command(about = "Add a task, or every open \"- [ ]\" item from a Markdown file")]
+    Add {
+        #[arg(help = "What to do (the first line becomes the title)")]
+        prompt: Option<String>,
+        #[arg(
+            long,
+            short,
+            help = "Project name or path (default: the selected project)"
+        )]
+        project: Option<String>,
+        #[arg(
+            long,
+            short,
+            help = "Read tasks from a Markdown checklist like tasks.md"
+        )]
+        file: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            short,
+            default_value_t = 1,
+            help = "Run this many attempts in parallel and pick the best (1 to 4)"
+        )]
+        attempts: u8,
+    },
+    #[command(about = "List queued tasks (tab separated)")]
+    Ls,
 }
 
 #[derive(Subcommand)]
@@ -154,9 +245,17 @@ fn run(cli: Cli) -> Result<()> {
                 Some(p) => p,
                 None => std::env::current_dir()?.display().to_string(),
             };
+            let shown = name
+                .clone()
+                .unwrap_or_else(|| model::folder_name(&model::untilde(&path)));
             let mut args = vec!["add".to_string(), path];
             args.extend(name);
-            print_reply(&ctl_started(&args)?)
+            let reply = ctl_started(&args)?;
+            if let Some(e) = reply.strip_prefix("error: ") {
+                bail!("{e}");
+            }
+            println!("added {shown}; open pebl to start a session in it");
+            Ok(())
         }
         Some(Cmd::New {
             project,
@@ -168,6 +267,88 @@ fn run(cli: Cli) -> Result<()> {
             name.unwrap_or_default(),
             prompt.unwrap_or_default(),
         ])?),
+        Some(Cmd::Checks { path }) => show_checks(path),
+        Some(Cmd::Recipe { action }) => match action {
+            RecipeCmd::Ls => {
+                let here = std::env::current_dir().ok();
+                for r in recipes::load(&paths::recipes(), here.as_deref()) {
+                    let vars = r.vars();
+                    let needs = if vars.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  needs: {}", vars.join(", "))
+                    };
+                    println!(
+                        "{:<20} {} steps  {}{needs}",
+                        r.name,
+                        r.steps.len(),
+                        model::tilde(&r.path)
+                    );
+                }
+                Ok(())
+            }
+            RecipeCmd::Add { source } => {
+                let text = if source.starts_with("https://") || source.starts_with("http://") {
+                    let out = std::process::Command::new("curl")
+                        .args(["-fsSL", "-m", "20", &source])
+                        .output()
+                        .context("running curl")?;
+                    if !out.status.success() {
+                        bail!("couldn't download {source}");
+                    }
+                    String::from_utf8_lossy(&out.stdout).into_owned()
+                } else {
+                    std::fs::read_to_string(&source).with_context(|| format!("reading {source}"))?
+                };
+                let path = recipes::install(&paths::recipes(), &text)?;
+                println!("installed {}", model::tilde(&path));
+                Ok(())
+            }
+            RecipeCmd::Run {
+                name,
+                project,
+                vars,
+            } => {
+                let mut args = vec!["recipe-run".to_string(), project.unwrap_or_default(), name];
+                args.extend(vars);
+                print_reply(&ctl_started(&args)?)
+            }
+        },
+        Some(Cmd::Queue { action }) => match action {
+            QueueCmd::Add {
+                prompt,
+                project,
+                file,
+                attempts,
+            } => {
+                let tasks = match (prompt, file) {
+                    (Some(p), None) => vec![p],
+                    (None, Some(f)) => {
+                        let text = std::fs::read_to_string(&f)
+                            .with_context(|| format!("reading {}", f.display()))?;
+                        queue::from_markdown(&text)
+                    }
+                    (Some(_), Some(_)) => bail!("give a task or --file, not both"),
+                    (None, None) => bail!("give a task, or --file tasks.md"),
+                };
+                if tasks.is_empty() {
+                    bail!("no open \"- [ ]\" items in that file");
+                }
+                for t in &tasks {
+                    print_reply(&ctl_started(&[
+                        "queue-add".into(),
+                        project.clone().unwrap_or_default(),
+                        attempts.to_string(),
+                        t.clone(),
+                    ])?)?;
+                }
+                Ok(())
+            }
+            QueueCmd::Ls => {
+                print!("{}", ipc::ctl(&paths::sock(), &["queue-ls".into()])?);
+                Ok(())
+            }
+        },
         Some(Cmd::Ls) => {
             let out = match ipc::ctl(&paths::sock(), &["ls".into()]) {
                 Ok(s) => s,
@@ -265,6 +446,14 @@ fn run(cli: Cli) -> Result<()> {
             };
             review::run(&sid, &cwd, &title, mode)
         }
+        Some(Cmd::Timeline { sid, title, color }) => {
+            let mode = if color == "256" {
+                ui::theme::ColorMode::Indexed
+            } else {
+                ui::theme::ColorMode::Truecolor
+            };
+            timeline_view::run(&sid, &title, mode)
+        }
         Some(Cmd::Hook { .. }) => Ok(()),
         Some(Cmd::Statusline) => {
             status::hook::statusline();
@@ -295,6 +484,39 @@ pub fn self_exe() -> String {
         .and_then(std::fs::canonicalize)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "pebl".into())
+}
+
+fn show_checks(path: Option<std::path::PathBuf>) -> Result<()> {
+    let dir = match path {
+        Some(p) => p,
+        None => std::env::current_dir()?,
+    };
+    let dir = std::fs::canonicalize(&dir).with_context(|| format!("{}", dir.display()))?;
+    let private = project::private_file(&dir);
+    let off = config::load(&paths::config())?.checks == Some(false);
+    let (found, from) = match checks::configured(&[&dir]) {
+        Some((c, file)) => (c, format!("from {}", file.display())),
+        None if off => (
+            checks::Checks::default(),
+            "detection is off (checks = false in ~/.pebl/config.toml)".into(),
+        ),
+        None => (checks::detect(&dir), "detected from the project".into()),
+    };
+    println!("{}  {from}", model::tilde(&dir));
+    if found.is_empty() {
+        println!("  no checks: no test, lint or typecheck scripts found");
+    }
+    for (name, cmd) in &found.commands {
+        println!("  {name:<10} {cmd}");
+    }
+    if found.auto_fix > 0 {
+        println!("  auto_fix   {}", found.auto_fix);
+    }
+    println!(
+        "\nTo change them without touching the repo, put a [checks] table in\n  {}\nfor example:\n\n[checks]\ntest = \"npm test\"\nauto_fix = 0\n\nAn empty [checks] table turns them off for this project.",
+        private.display()
+    );
+    Ok(())
 }
 
 fn print_reply(s: &str) -> Result<()> {
@@ -625,6 +847,11 @@ fn doctor() -> Result<()> {
         println!("  · hooks  written on first launch");
     }
     println!("  · hotkey  {}", hotkey::status());
+    if std::env::var("TERM_PROGRAM").as_deref() == Ok("Apple_Terminal") {
+        println!("  · new line  Terminal.app sends shift+enter as plain enter: type \\ then enter, or option+enter with Option as Meta on");
+    } else {
+        println!("  · new line  shift+enter, or \\ then enter");
+    }
     match update::check_now() {
         Some(latest) if update::is_newer(&latest, update::current()) => println!(
             "  · version  {} (pebl {latest} is out: run `pebl update`)",
@@ -660,6 +887,7 @@ fn preview(width: u16, height: u16) -> Result<()> {
         col: None,
         ctx: None,
         marked: None,
+        check: None,
     };
     let projects = vec![
         ProjectRow {

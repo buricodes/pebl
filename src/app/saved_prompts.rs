@@ -1,0 +1,461 @@
+use super::{edit, App, IMode};
+use crate::backend::{SessionBackend, UiBackend};
+use crate::ipc::{Key, KeyCode};
+use crate::prompts::{self, Prompt};
+use crate::recipes::{self, Recipe};
+use crate::view::{Clip, Focus, NameFrom, PromptRow, PromptStep, PromptsView};
+use anyhow::{anyhow, bail, Result};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+const ROWS: usize = 6;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Picker {
+    query: String,
+    sel: usize,
+    targets: Vec<String>,
+    marked: bool,
+    step: PromptStep,
+    values: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Entry {
+    Prompt(Prompt),
+    Recipe(Recipe),
+}
+
+impl Entry {
+    fn name(&self) -> &str {
+        match self {
+            Entry::Prompt(p) => &p.name,
+            Entry::Recipe(r) => &r.name,
+        }
+    }
+
+    fn path(&self) -> &PathBuf {
+        match self {
+            Entry::Prompt(p) => &p.path,
+            Entry::Recipe(r) => &r.path,
+        }
+    }
+
+    fn uses_clipboard(&self) -> bool {
+        match self {
+            Entry::Prompt(p) => p.uses_clipboard(),
+            Entry::Recipe(r) => r.uses_clipboard(),
+        }
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        match self {
+            Entry::Prompt(p) => p.matches(query),
+            Entry::Recipe(r) => {
+                let q = query.trim().to_lowercase();
+                q.is_empty()
+                    || r.name.to_lowercase().contains(&q)
+                    || r.description.to_lowercase().contains(&q)
+            }
+        }
+    }
+
+    fn row(&self) -> PromptRow {
+        match self {
+            Entry::Prompt(p) => PromptRow {
+                name: p.name.clone(),
+                preview: p.preview(),
+                clipboard: p.uses_clipboard(),
+                steps: 0,
+            },
+            Entry::Recipe(r) => PromptRow {
+                name: r.name.clone(),
+                preview: r.description.clone(),
+                clipboard: r.uses_clipboard(),
+                steps: r.steps.len(),
+            },
+        }
+    }
+}
+
+impl<B: SessionBackend + UiBackend> App<B> {
+    pub(super) fn start_prompts(&mut self) -> Result<()> {
+        let (targets, marked) = match &self.mode {
+            IMode::Mark { marks } | IMode::Broadcast { marks, .. } if !marks.is_empty() => {
+                (marks.clone(), true)
+            }
+            _ => {
+                let sid = self
+                    .active
+                    .clone()
+                    .filter(|sid| self.st.session(sid).is_some_and(|s| s.pane.is_some()))
+                    .ok_or_else(|| anyhow!("open a session first, or mark several with ctrl+x"))?;
+                (vec![sid], false)
+            }
+        };
+        self.cancel_mode();
+        self.mode = IMode::Prompts(Picker {
+            query: String::new(),
+            sel: 0,
+            targets,
+            marked,
+            step: PromptStep::List,
+            values: BTreeMap::new(),
+        });
+        self.refresh_prompts();
+        self.apply_layout();
+        self.set_focus(Focus::Bar);
+        Ok(())
+    }
+
+    pub(super) fn refresh_prompts(&mut self) {
+        self.saved = prompts::load(&self.env.prompts);
+        let project = self
+            .active
+            .as_deref()
+            .and_then(|sid| self.st.session(sid))
+            .and_then(|s| self.st.project(&s.project))
+            .map(|p| p.path.clone());
+        self.recipes = recipes::load(&self.env.recipes, project.as_deref());
+        self.clip = (self.env.clipboard)();
+    }
+
+    fn shown(&self, query: &str) -> Vec<Entry> {
+        let prompts = self.saved.iter().cloned().map(Entry::Prompt);
+        let recipes = self.recipes.iter().cloned().map(Entry::Recipe);
+        prompts
+            .chain(recipes)
+            .filter(|e| e.matches(query))
+            .collect()
+    }
+
+    fn selected(&self, pk: &Picker) -> Option<Entry> {
+        self.shown(&pk.query).into_iter().nth(pk.sel)
+    }
+
+    pub(super) fn prompts_key(&mut self, mut pk: Picker, k: Key) -> Result<()> {
+        let res = match std::mem::take(&mut pk.step) {
+            PromptStep::List => self.list_key(&mut pk, k),
+            PromptStep::Name { text, from } => self.name_key(&mut pk, text, from, k),
+            PromptStep::Var { name, text, .. } => self.var_key(&mut pk, name, text, k),
+            PromptStep::ConfirmDelete => self.delete_key(&mut pk, k),
+        };
+        match res {
+            Ok(true) => Ok(()),
+            other => {
+                self.mode = IMode::Prompts(pk);
+                other.map(|_| ())
+            }
+        }
+    }
+
+    fn list_key(&mut self, pk: &mut Picker, k: Key) -> Result<bool> {
+        match k.code {
+            KeyCode::Esc => {
+                self.close_prompts(pk);
+                return Ok(true);
+            }
+            KeyCode::Up => pk.sel = pk.sel.saturating_sub(1),
+            KeyCode::Down => {
+                pk.sel = (pk.sel + 1).min(self.shown(&pk.query).len().saturating_sub(1))
+            }
+            KeyCode::Enter if self.selected(pk).is_none() && !pk.query.trim().is_empty() => {
+                pk.step = PromptStep::Name {
+                    text: suggest_name(&pk.query),
+                    from: NameFrom::Typed,
+                }
+            }
+            KeyCode::Enter | KeyCode::Tab => {
+                let entry = self
+                    .selected(pk)
+                    .ok_or_else(|| anyhow!("no prompt to send; ctrl+a adds one"))?;
+                let p = match entry {
+                    Entry::Recipe(r) if k.code == KeyCode::Tab => {
+                        bail!("“{}” runs on its own: enter starts it", r.name)
+                    }
+                    Entry::Recipe(r) => return self.begin_recipe(pk, r),
+                    Entry::Prompt(p) => p,
+                };
+                let text = p.fill(self.clip.as_deref())?;
+                if k.code == KeyCode::Tab {
+                    self.type_prompt(pk, &text)?;
+                } else {
+                    self.send_prompt(pk, &p.name, &text)?;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('a') if k.ctrl => {
+                pk.step = PromptStep::Name {
+                    text: String::new(),
+                    from: NameFrom::New,
+                }
+            }
+            KeyCode::Char('s') if k.ctrl => {
+                if !self.last_prompt.contains_key(&pk.targets[0]) {
+                    bail!("send a prompt in this session first, then save it here");
+                }
+                pk.step = PromptStep::Name {
+                    text: String::new(),
+                    from: NameFrom::Last,
+                }
+            }
+            KeyCode::Char('e') if k.ctrl => {
+                let p = self
+                    .selected(pk)
+                    .ok_or_else(|| anyhow!("no prompt to edit"))?;
+                self.launch_editor(p.path())?;
+                self.flash(format!(
+                    "editing “{}”: the list updates when you save",
+                    p.name()
+                ));
+            }
+            KeyCode::Char('d') if k.ctrl => {
+                self.selected(pk)
+                    .ok_or_else(|| anyhow!("no prompt to delete"))?;
+                pk.step = PromptStep::ConfirmDelete;
+            }
+            KeyCode::Char('u') if k.ctrl => {
+                pk.query.clear();
+                pk.sel = 0;
+            }
+            _ if k.ctrl => {}
+            _ => {
+                edit(&mut pk.query, &k, false);
+                pk.sel = 0;
+            }
+        }
+        Ok(false)
+    }
+
+    fn name_key(
+        &mut self,
+        pk: &mut Picker,
+        mut text: String,
+        from: NameFrom,
+        k: Key,
+    ) -> Result<bool> {
+        match k.code {
+            KeyCode::Esc => {}
+            KeyCode::Enter => {
+                pk.step = PromptStep::Name {
+                    text: text.clone(),
+                    from,
+                };
+                let dir = self.env.prompts.clone();
+                let path = match from {
+                    NameFrom::New => prompts::create_blank(&dir, &text)?,
+                    NameFrom::Last => {
+                        let body = self
+                            .last_prompt
+                            .get(&pk.targets[0])
+                            .cloned()
+                            .ok_or_else(|| anyhow!("no prompt sent in this session yet"))?;
+                        prompts::create(&dir, &text, &body)?
+                    }
+                    NameFrom::Typed => prompts::create(&dir, &text, pk.query.trim())?,
+                };
+                self.refresh_prompts();
+                pk.query.clear();
+                pk.sel = self.saved.iter().position(|p| p.path == path).unwrap_or(0);
+                pk.step = PromptStep::List;
+                if from == NameFrom::New {
+                    self.launch_editor(&path)?;
+                    self.flash(format!("write “{}” in the editor, then save", text.trim()));
+                } else {
+                    self.flash(format!(
+                        "saved “{}”: enter sends it, ctrl+e edits it",
+                        text.trim()
+                    ));
+                }
+            }
+            _ => {
+                edit(&mut text, &k, false);
+                pk.step = PromptStep::Name { text, from };
+            }
+        }
+        Ok(false)
+    }
+
+    fn delete_key(&mut self, pk: &mut Picker, k: Key) -> Result<bool> {
+        if k.code == KeyCode::Char('y') {
+            if let Some(p) = self.selected(pk) {
+                std::fs::remove_file(p.path())
+                    .map_err(|e| anyhow!("deleting {}: {e}", p.path().display()))?;
+                self.refresh_prompts();
+                pk.sel = pk.sel.min(self.shown(&pk.query).len().saturating_sub(1));
+                self.flash(format!("deleted “{}”", p.name()));
+            }
+        }
+        Ok(false)
+    }
+
+    fn begin_recipe(&mut self, pk: &mut Picker, r: Recipe) -> Result<bool> {
+        if pk.targets.len() != 1 {
+            bail!("a recipe starts its own session: open the picker from one session");
+        }
+        pk.values.clear();
+        self.next_var(pk, &r)
+    }
+
+    fn next_var(&mut self, pk: &mut Picker, r: &Recipe) -> Result<bool> {
+        let vars = r.vars();
+        if let Some(name) = vars.iter().find(|v| !pk.values.contains_key(*v)) {
+            pk.step = PromptStep::Var {
+                name: name.clone(),
+                text: String::new(),
+                n: pk.values.len() + 1,
+                of: vars.len(),
+            };
+            return Ok(false);
+        }
+        let plan = r.fill(&pk.values, self.clip.as_deref())?;
+        let pid = self
+            .st
+            .session(&pk.targets[0])
+            .map(|s| s.project.clone())
+            .ok_or_else(|| anyhow!("that session is gone"))?;
+        self.queue_recipe(&pid, r, plan)?;
+        self.finish_prompts(pk);
+        self.flash(format!(
+            "started “{}” in a new worktree · q shows its steps",
+            r.name
+        ));
+        Ok(true)
+    }
+
+    fn var_key(&mut self, pk: &mut Picker, name: String, mut text: String, k: Key) -> Result<bool> {
+        let Some(Entry::Recipe(r)) = self.selected(pk) else {
+            pk.step = PromptStep::List;
+            return Ok(false);
+        };
+        match k.code {
+            KeyCode::Esc => {
+                pk.values.clear();
+                return Ok(false);
+            }
+            KeyCode::Enter if !text.trim().is_empty() => {
+                pk.values.insert(name, text.trim().to_string());
+                return self.next_var(pk, &r);
+            }
+            KeyCode::Char('u') if k.ctrl => text.clear(),
+            _ if k.ctrl => {}
+            _ => edit(&mut text, &k, false),
+        }
+        let vars = r.vars();
+        pk.step = PromptStep::Var {
+            n: pk.values.len() + 1,
+            of: vars.len(),
+            name,
+            text,
+        };
+        Ok(false)
+    }
+
+    fn send_prompt(&mut self, pk: &Picker, name: &str, text: &str) -> Result<()> {
+        let (now_n, later) = self.deliver(&pk.targets, text)?;
+        self.finish_prompts(pk);
+        self.flash(match (pk.targets.len(), later) {
+            (1, 0) => format!("sent “{name}”"),
+            (1, _) => format!("“{name}” queued until this turn ends"),
+            (_, 0) => format!("sent “{name}” to {now_n} sessions"),
+            _ => format!("sent “{name}” to {now_n}, {later} queued until their turn ends"),
+        });
+        Ok(())
+    }
+
+    fn type_prompt(&mut self, pk: &Picker, text: &str) -> Result<()> {
+        let [sid] = pk.targets.as_slice() else {
+            bail!("tab types into one session; enter sends to all of them");
+        };
+        let pane = self
+            .st
+            .session(sid)
+            .and_then(|s| s.pane.clone())
+            .ok_or_else(|| anyhow!("that session isn't running"))?;
+        self.be.send_text(&pane, text, false)?;
+        self.finish_prompts(pk);
+        Ok(())
+    }
+
+    fn finish_prompts(&mut self, pk: &Picker) {
+        self.cancel_mode();
+        let back = if pk.marked || self.active.is_none() {
+            Focus::Sidebar
+        } else {
+            Focus::Main
+        };
+        self.set_focus(back);
+    }
+
+    fn close_prompts(&mut self, pk: &Picker) {
+        if pk.marked {
+            self.cancel_mode();
+            self.mode = IMode::Mark {
+                marks: pk.targets.clone(),
+            };
+            self.set_focus(Focus::Sidebar);
+        } else {
+            self.finish_prompts(pk);
+        }
+    }
+
+    pub(super) fn prompts_view(&self, pk: &Picker) -> PromptsView {
+        let shown = self.shown(&pk.query);
+        let start = (pk.sel + 1).saturating_sub(ROWS);
+        let rows = shown
+            .iter()
+            .skip(start)
+            .take(ROWS)
+            .map(Entry::row)
+            .collect();
+        let clip = match shown.get(pk.sel) {
+            Some(p) if p.uses_clipboard() => clip_summary(self.clip.as_deref()),
+            _ => Clip::Unused,
+        };
+        let target = match pk.targets.as_slice() {
+            [sid] => self
+                .st
+                .session(sid)
+                .map(|s| {
+                    let project = self
+                        .st
+                        .project(&s.project)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("");
+                    format!("{project} / {}", s.name)
+                })
+                .unwrap_or_default(),
+            many => format!("{} sessions", many.len()),
+        };
+        PromptsView {
+            query: pk.query.clone(),
+            sel: pk.sel - start,
+            rows,
+            total: self.saved.len() + self.recipes.len(),
+            target,
+            clip,
+            step: pk.step.clone(),
+        }
+    }
+}
+
+fn suggest_name(text: &str) -> String {
+    text.split_whitespace()
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(40)
+        .collect()
+}
+
+fn clip_summary(clip: Option<&str>) -> Clip {
+    let text = clip.map(str::trim).unwrap_or("");
+    match text.lines().map(str::trim).find(|l| !l.is_empty()) {
+        Some(first) => Clip::Text {
+            first: first.to_string(),
+            lines: text.lines().count(),
+        },
+        None => Clip::Empty,
+    }
+}

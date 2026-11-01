@@ -1,0 +1,23 @@
+---
+source: src/timeline_view.rs
+assertion_line: 470
+expression: "crate::ui::screen::to_text(&buf)"
+---
+ ✻ Timeline  nova-api / rota-export                                                         3 turns
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ● Turn 1  13m ago   1 file +18 −4   ✕ test failed
+    › Fix the rota export for night shifts
+      Read utils/exports/rota.js · Edit utils/exports/rota.js · Bash npm test
+› ● Turn 2  10m ago   2 files +30 −6   ✓ test passed
+    › The project's checks failed after your last change.
+      Edit utils/exports/rota.test.js
+  ○ Turn 3  8m ago   no file changes
+    › What does this file do?
+  ↺ restored the files to turn 1
+  … in progress
+    › Try a different approach
+      Grep nightShift
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ j/k move · r restore files to this turn · q close

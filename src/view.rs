@@ -14,13 +14,18 @@ pub struct View {
     pub path: String,
     pub stage: Stage,
     pub flash: Option<String>,
+    #[serde(default)]
+    pub hints: Vec<(String, String)>,
     pub bell: u64,
+    pub osc: Option<(u64, String)>,
     pub color: ColorMode,
     pub filter: String,
     #[serde(default)]
     pub mascot: Option<String>,
     #[serde(default)]
     pub notice: Notice,
+    #[serde(default)]
+    pub tip: Option<TipView>,
     #[serde(default)]
     pub columns: Vec<ColumnTab>,
     #[serde(default)]
@@ -44,6 +49,14 @@ pub struct View {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TipView {
+    pub key: String,
+    pub text: String,
+    pub at: usize,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ShellView {
     pub open: bool,
     pub path: String,
@@ -51,6 +64,10 @@ pub struct ShellView {
     pub running: Option<String>,
     pub done: Option<(String, bool, String)>,
     pub resize: Option<(u16, u16)>,
+    #[serde(default)]
+    pub count: usize,
+    #[serde(default)]
+    pub at: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -119,6 +136,15 @@ pub struct SessionRow {
     pub ctx: Option<u8>,
     #[serde(default)]
     pub marked: Option<bool>,
+    #[serde(default)]
+    pub check: Option<CheckBadge>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckBadge {
+    Running,
+    Passed,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,10 +250,33 @@ pub enum Mode {
     Peek(Peek),
     Finish(Finish),
     Search(SearchView),
+    Prompts(PromptsView),
+    Inbox(InboxView),
+    Queue(QueueView),
+    Plan(PlanView),
+    Compare(CompareView),
+    Note {
+        project: String,
+        text: String,
+    },
     Mark {
         count: usize,
     },
     Broadcast(Broadcast),
+    Ask(AskView),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AskView {
+    pub rows: Vec<AskRow>,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AskRow {
+    pub question: String,
+    pub answer: Option<String>,
+    pub act: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -261,6 +310,129 @@ pub struct SearchView {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlanView {
+    pub session: String,
+    pub rows: Vec<(String, bool)>,
+    pub sel: usize,
+    pub more: usize,
+    pub picked: usize,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueueView {
+    pub project: String,
+    pub rows: Vec<QueueRow>,
+    pub sel: usize,
+    pub more: usize,
+    pub limit: usize,
+    pub input: Option<(String, u8)>,
+    pub confirm: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QueueRow {
+    pub state: crate::model::TaskState,
+    pub title: String,
+    pub attempts: u8,
+    pub detail: String,
+    pub age: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CompareView {
+    pub title: String,
+    pub rows: Vec<CompareRow>,
+    pub sel: usize,
+    pub confirm: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CompareRow {
+    pub name: String,
+    pub status: Status,
+    pub check: Option<CheckBadge>,
+    pub files: usize,
+    pub adds: usize,
+    pub dels: usize,
+    pub tokens: String,
+    pub time: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InboxView {
+    pub rows: Vec<InboxRow>,
+    pub sel: usize,
+    pub more: usize,
+    pub waiting: usize,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InboxRow {
+    pub kind: NoticeKind,
+    pub project: String,
+    pub session: String,
+    pub detail: String,
+    pub age: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PromptsView {
+    pub query: String,
+    pub sel: usize,
+    pub rows: Vec<PromptRow>,
+    pub total: usize,
+    pub target: String,
+    pub clip: Clip,
+    pub step: PromptStep,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PromptRow {
+    pub name: String,
+    pub preview: String,
+    pub clipboard: bool,
+    #[serde(default)]
+    pub steps: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Clip {
+    #[default]
+    Unused,
+    Empty,
+    Text {
+        first: String,
+        lines: usize,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum PromptStep {
+    #[default]
+    List,
+    Name {
+        text: String,
+        from: NameFrom,
+    },
+    Var {
+        name: String,
+        text: String,
+        n: usize,
+        of: usize,
+    },
+    ConfirmDelete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum NameFrom {
+    New,
+    Last,
+    Typed,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SearchRow {
     pub project: String,
     pub title: String,
@@ -279,6 +451,8 @@ pub struct Finish {
     pub gh: bool,
     pub confirm_discard: bool,
     pub busy: Option<String>,
+    #[serde(default)]
+    pub conflicts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

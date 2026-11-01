@@ -1,0 +1,6 @@
+---
+source: src/ui/screen.rs
+assertion_line: 865
+expression: "out.lines().last().unwrap_or(\"\")"
+---
+ t send failing checks to Claude · f finish · ? all keys          ◆ 1  4 active

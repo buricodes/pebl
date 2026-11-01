@@ -83,6 +83,7 @@ pub mod fixtures {
             col: None,
             ctx: None,
             marked: None,
+            check: None,
         }
     }
 
@@ -348,6 +349,104 @@ mod tests {
         insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
     }
 
+    fn tip() -> crate::view::TipView {
+        crate::view::TipView {
+            key: "ctrl+x".into(),
+            text: "marks many chats, one prompt to all".into(),
+            at: 9,
+            total: 18,
+        }
+    }
+
+    #[test]
+    fn jel_gives_tips() {
+        let mut v = base();
+        v.notice.count = 4;
+        v.mascot = Some("jel".into());
+        v.tip = Some(tip());
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn ask_jel_is_clickable_in_the_status_bar() {
+        let mut v = base();
+        v.hints = vec![
+            ("ctrl+p".into(), "prompts".into()),
+            ("alt+a".into(), "ask jel".into()),
+        ];
+        let at = |x| bar::button_at(&v, 120, x);
+        assert_eq!(
+            (at(3), at(20), at(26), at(40)),
+            (None, Some("ask"), Some("ask"), None)
+        );
+    }
+
+    #[test]
+    fn jel_tip_short_window() {
+        let mut v = base();
+        v.mascot = Some("jel".into());
+        v.tip = Some(tip());
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 120, 24, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn jel_tip_compact() {
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.projects.truncate(1);
+        v.mascot = Some("jel".into());
+        v.tip = Some(tip());
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    fn ask_view() -> crate::view::AskView {
+        let row = |q: &str, a: Option<&str>, act: Option<&str>| crate::view::AskRow {
+            question: q.into(),
+            answer: a.map(String::from),
+            act: act.map(String::from),
+        };
+        crate::view::AskView {
+            rows: vec![
+                row(
+                    "what is e2e-tests stuck on?",
+                    Some("3 specs time out waiting for network idle"),
+                    None,
+                ),
+                row(
+                    "how do I run two terminals?",
+                    Some("Open the shell with ctrl+t, then click + split"),
+                    Some("opens a shell"),
+                ),
+                row("which chat is waiting on me?", None, None),
+            ],
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn ask_jel_strip() {
+        let t = transcript();
+        let mut v = base();
+        let mut av = ask_view();
+        av.rows.pop();
+        v.mode = Mode::Ask(av);
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn ask_jel_strip_minimum() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Ask(ask_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
     #[test]
     fn mascot_compact() {
         let mut v = base();
@@ -409,6 +508,26 @@ mod tests {
             gh: true,
             confirm_discard: false,
             busy: None,
+            conflicts: Vec::new(),
+        });
+        v.focus = Focus::Bar;
+        let t = transcript();
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn finish_strip_with_conflicts() {
+        let mut v = base();
+        v.mode = Mode::Finish(Finish {
+            session: "auth-refactor".into(),
+            branch: "pebl/auth-refactor".into(),
+            into: "main".into(),
+            ahead: 3,
+            dirty: 0,
+            gh: true,
+            confirm_discard: false,
+            busy: None,
+            conflicts: vec!["src/middleware/auth.ts".into(), "src/session.ts".into()],
         });
         v.focus = Focus::Bar;
         let t = transcript();
@@ -560,6 +679,354 @@ mod tests {
         insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
     }
 
+    fn prompts_view(step: PromptStep) -> PromptsView {
+        let row = |name: &str, preview: &str, clipboard: bool| PromptRow {
+            steps: 0,
+            name: name.into(),
+            preview: preview.into(),
+            clipboard,
+        };
+        PromptsView {
+            query: String::new(),
+            sel: 0,
+            rows: vec![
+                row(
+                    "investigate ticket",
+                    "Investigate this ticket before changing any code. Read the code it touches.",
+                    true,
+                ),
+                row(
+                    "review diff",
+                    "Review this diff for edge cases and missing tests.",
+                    false,
+                ),
+                row(
+                    "write tests",
+                    "Write tests for what you just changed.",
+                    false,
+                ),
+                PromptRow {
+                    steps: 5,
+                    ..row(
+                        "fix ticket",
+                        "Investigate, fix, test, review and commit a copied ticket",
+                        true,
+                    )
+                },
+            ],
+            total: 4,
+            target: "nova-api / auth-refactor".into(),
+            clip: Clip::Text {
+                first: "BUG-412: password reset email links expire immediately".into(),
+                lines: 14,
+            },
+            step,
+        }
+    }
+
+    fn inbox_view() -> InboxView {
+        let row = |kind, project: &str, session: &str, detail: &str, age: &str| InboxRow {
+            kind,
+            project: project.into(),
+            session: session.into(),
+            detail: detail.into(),
+            age: age.into(),
+        };
+        InboxView {
+            rows: vec![
+                row(
+                    NoticeKind::Waiting,
+                    "nova-api",
+                    "migrate-staging",
+                    "wants to run Bash",
+                    "4m",
+                ),
+                row(
+                    NoticeKind::Waiting,
+                    "infra",
+                    "dns-cutover",
+                    "waiting for input",
+                    "1m",
+                ),
+                row(
+                    NoticeKind::Error,
+                    "billing-svc",
+                    "e2e-tests",
+                    "exit 1",
+                    "12m",
+                ),
+                row(NoticeKind::Done, "nova-api", "docs-pass", "finished", "2m"),
+            ],
+            sel: 0,
+            more: 0,
+            waiting: 2,
+            total: 4,
+        }
+    }
+
+    fn with_checks() -> View {
+        let mut v = base();
+        v.projects[0].sessions[0].check = Some(CheckBadge::Passed);
+        v.projects[0].sessions[2].check = Some(CheckBadge::Failed);
+        v.projects[1].sessions[0].check = Some(CheckBadge::Running);
+        v
+    }
+
+    #[test]
+    fn check_badges() {
+        let t = transcript();
+        insta::assert_snapshot!(snap(&with_checks(), 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn check_badges_minimum() {
+        let t = transcript();
+        let mut v = with_checks();
+        v.layout = Layout::for_width(80, false);
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn note_input() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Note {
+            project: "nova-api".into(),
+            text: "we use pnpm, never npm".into(),
+        };
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    fn queue_view(input: Option<(String, u8)>) -> QueueView {
+        use crate::model::TaskState::*;
+        let row = |state, title: &str, attempts, detail: &str, age: &str| QueueRow {
+            state,
+            title: title.into(),
+            attempts,
+            detail: detail.into(),
+            age: age.into(),
+        };
+        QueueView {
+            project: "nova-api".into(),
+            rows: vec![
+                row(
+                    Review,
+                    "Fix the rota export for night shifts",
+                    1,
+                    "ready · test, lint passed",
+                    "3m",
+                ),
+                row(
+                    Running,
+                    "Speed up the dashboard query",
+                    3,
+                    "1 of 3 attempts done",
+                    "12m",
+                ),
+                row(Failed, "Upgrade Prisma to v7", 1, "typecheck failed", "20m"),
+                row(
+                    Pending,
+                    "Add CSV download to reports",
+                    1,
+                    "waiting · #1 in line",
+                    "25m",
+                ),
+                row(Done, "Rename staff roles", 1, "merged or closed", "1h"),
+            ],
+            sel: 0,
+            more: 0,
+            limit: 2,
+            input,
+            confirm: false,
+        }
+    }
+
+    #[test]
+    fn queue_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Queue(queue_view(None));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn queue_strip_minimum_adding() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Queue(queue_view(Some(("Make the export 10x faster".into(), 3))));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    fn compare_view() -> CompareView {
+        let row =
+            |name: &str, status, check, files, adds, dels, tokens: &str, time: &str| CompareRow {
+                name: name.into(),
+                status,
+                check,
+                files,
+                adds,
+                dels,
+                tokens: tokens.into(),
+                time: time.into(),
+            };
+        CompareView {
+            title: "Speed up the dashboard query".into(),
+            rows: vec![
+                row(
+                    "speed-up-the-dashboard-t4-1",
+                    Status::Idle,
+                    Some(CheckBadge::Passed),
+                    3,
+                    48,
+                    12,
+                    "182k",
+                    "6m",
+                ),
+                row(
+                    "speed-up-the-dashboard-t4-2",
+                    Status::Idle,
+                    Some(CheckBadge::Failed),
+                    5,
+                    130,
+                    40,
+                    "240k",
+                    "9m",
+                ),
+                row(
+                    "speed-up-the-dashboard-t4-3",
+                    Status::Idle,
+                    Some(CheckBadge::Passed),
+                    2,
+                    21,
+                    30,
+                    "95k",
+                    "4m",
+                ),
+            ],
+            sel: 2,
+            confirm: true,
+        }
+    }
+
+    #[test]
+    fn compare_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Compare(compare_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn compare_strip_minimum() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Compare(compare_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    fn hinted(focus: Focus) -> View {
+        let mut v = base();
+        v.focus = focus;
+        let h = |k: &str, l: &str| (k.to_string(), l.to_string());
+        v.hints = match focus {
+            Focus::Main => vec![
+                h("ctrl+p", "prompts"),
+                h("ctrl+y", "inbox"),
+                h("ctrl+t", "shell"),
+                h("ctrl+space", "sidebar"),
+                h("ctrl+j/k", "switch"),
+            ],
+            _ => vec![
+                h("t", "send failing checks to Claude"),
+                h("f", "finish: merge or PR"),
+                h("enter", "open"),
+                h("d", "review changes"),
+                h("R", "ask a reviewer"),
+                h("?", "all keys"),
+            ],
+        };
+        v
+    }
+
+    #[test]
+    fn context_hints() {
+        let t = transcript();
+        let side = snap(&hinted(Focus::Sidebar), 120, 40, Main::Lines(&t));
+        let main = snap(&hinted(Focus::Main), 120, 40, Main::Lines(&t));
+        let last = |s: &str| s.lines().last().unwrap_or("").to_string();
+        insta::assert_snapshot!(format!("{}\n{}", last(&side), last(&main)));
+    }
+
+    #[test]
+    fn context_hints_minimum() {
+        let t = transcript();
+        let mut v = hinted(Focus::Sidebar);
+        v.layout = Layout::for_width(80, false);
+        let out = snap(&v, 80, 24, Main::Lines(&t));
+        insta::assert_snapshot!(out.lines().last().unwrap_or(""));
+    }
+
+    #[test]
+    fn inbox_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Inbox(inbox_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn inbox_strip_minimum() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Inbox(inbox_view());
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn prompts_strip() {
+        let t = transcript();
+        let mut v = base();
+        v.mode = Mode::Prompts(prompts_view(PromptStep::List));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn prompts_strip_typed_text_matches_nothing() {
+        let t = transcript();
+        let mut v = base();
+        let mut pv = prompts_view(PromptStep::List);
+        pv.query = "hey so how I work is I ask every agent to look into the project and check the structure of the codebase first".into();
+        pv.rows.clear();
+        pv.total = 1;
+        pv.clip = Clip::Unused;
+        v.mode = Mode::Prompts(pv);
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 120, 40, Main::Lines(&t)));
+    }
+
+    #[test]
+    fn prompts_strip_minimum_naming() {
+        let t = transcript();
+        let mut v = base();
+        v.layout = Layout::for_width(80, false);
+        v.mode = Mode::Prompts(prompts_view(PromptStep::Name {
+            text: "triage".into(),
+            from: NameFrom::Last,
+        }));
+        v.focus = Focus::Bar;
+        insta::assert_snapshot!(snap(&v, 80, 24, Main::Lines(&t)));
+    }
+
     #[test]
     fn search_strip_minimum() {
         let t = transcript();
@@ -631,6 +1098,8 @@ mod tests {
                 running: running.map(String::from),
                 done: done.map(|(a, b, c)| (a.to_string(), b, c.to_string())),
                 resize,
+                count: 1,
+                at: 1,
             };
         let mut out = String::new();
         let mut line = |v: &View, w: u16| {
@@ -647,6 +1116,27 @@ mod tests {
         v.runnable = Some((2, 3));
         v.shell = Some(sh(true, None, None, None));
         line(&v, 120);
+        v.shell = Some(ShellView {
+            count: 3,
+            at: 2,
+            ..sh(true, None, None, None)
+        });
+        line(&v, 120);
+        let buttons: Vec<Option<&str>> = [100, 104, 113, 117, 119]
+            .iter()
+            .map(|x| bar::button_at(&v, 120, *x))
+            .collect();
+        assert_eq!(
+            buttons,
+            vec![
+                None,
+                Some("shell-new"),
+                Some("shell-close"),
+                Some("shell-close"),
+                None
+            ]
+        );
+        line(&v, 80);
         v.shell = Some(sh(true, None, None, Some((11, 23))));
         line(&v, 120);
         v.focus = Focus::Main;

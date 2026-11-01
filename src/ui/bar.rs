@@ -1,6 +1,10 @@
 use super::theme::Tok;
 use super::{keys, len, seg, seg_len, segb, Painter, Seg};
-use crate::view::{Broadcast, Finish, Layout, Mode, NewProject, Peek, SearchView, View};
+use crate::model::TaskState;
+use crate::view::{
+    AskView, Broadcast, CheckBadge, Clip, CompareView, Finish, InboxView, Layout, Mode, NameFrom,
+    NewProject, NoticeKind, Peek, PlanView, PromptStep, PromptsView, QueueView, SearchView, View,
+};
 
 fn shell_line(v: &View) -> bool {
     matches!(v.mode, Mode::Normal)
@@ -17,8 +21,13 @@ pub fn height(v: &View) -> u16 {
         Mode::NewProject(np) => prompt_rows(np, 200).len() as u16 + 2,
         Mode::Peek(pk) => pk.lines.len() as u16 + 5,
         Mode::Broadcast(b) => broadcast_rows(b) as u16 + 2,
-        Mode::Search(_) if v.layout.short_keys() => 10,
-        Mode::Search(_) => 12,
+        Mode::Inbox(iv) => inbox_rows(iv) as u16 + 3,
+        Mode::Ask(av) => 2 * ask_shown(av, v.layout.short_keys()) as u16 + 5,
+        Mode::Queue(qv) => queue_rows(qv) as u16 + 3,
+        Mode::Plan(pv) => pv.rows.len() as u16 + u16::from(pv.more > 0) + 3,
+        Mode::Compare(cv) => cv.rows.len().max(1) as u16 + 4 + u16::from(cv.confirm),
+        Mode::Search(_) | Mode::Prompts(_) if v.layout.short_keys() => 10,
+        Mode::Search(_) | Mode::Prompts(_) => 12,
         Mode::Finish(f) => finish_rows(f, v.flash.as_deref()).len() as u16 + 2,
         _ => 1,
     }
@@ -48,6 +57,48 @@ pub fn render(v: &View, p: &mut Painter) {
     }
     if let Mode::Broadcast(b) = &v.mode {
         broadcast(b, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Plan(pv) = &v.mode {
+        plan(pv, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Queue(qv) = &v.mode {
+        queue(qv, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Compare(cv) = &v.mode {
+        compare(cv, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Ask(av) = &v.mode {
+        ask(av, p, v.layout.short_keys());
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Inbox(iv) = &v.mode {
+        inbox(iv, p);
+        if h >= 2 {
+            let w = p.w();
+            p.hl(0, h - 2, w);
+        }
+    }
+    if let Mode::Prompts(pv) = &v.mode {
+        prompts(pv, p, !v.layout.short_keys());
         if h >= 2 {
             let w = p.w();
             p.hl(0, h - 2, w);
@@ -155,6 +206,23 @@ fn finish_rows(f: &Finish, flash: Option<&str>) -> Vec<Vec<Seg>> {
         ]
     };
     let clean = f.dirty == 0;
+    if !f.conflicts.is_empty() {
+        rows.insert(
+            2,
+            vec![
+                seg("   ✕ ", Tok::Err),
+                seg(
+                    format!("conflicts with {} in {}", f.into, f.conflicts.join(", ")),
+                    Tok::Err,
+                ),
+            ],
+        );
+        rows.push(opt(
+            "c",
+            format!("ask Claude to rebase onto {} and resolve them", f.into),
+            true,
+        ));
+    }
     if f.dirty > 0 {
         rows.push(opt("a", "ask Claude to commit its changes".into(), true));
     }
@@ -292,6 +360,539 @@ fn snippet(text: &str, q: &str, w: usize, sel: bool) -> Vec<Seg> {
         post = super::fit(&post, room);
     }
     vec![seg(pre, base), segb(m, Tok::Acc), seg(post, base)]
+}
+
+fn plan(pv: &PlanView, p: &mut Painter) {
+    let w = p.w();
+    p.segs(
+        1,
+        0,
+        &[
+            segb("Plan", Tok::Fg),
+            seg(format!(" · from {}", pv.session), Tok::Mute),
+        ],
+    );
+    p.rt(
+        w - 1,
+        0,
+        &format!("{} of {} ticked", pv.picked, pv.total),
+        Tok::Dim,
+        false,
+    );
+    for (i, (title, on)) in pv.rows.iter().enumerate() {
+        let y = 1 + i as i32;
+        let sel = i == pv.sel;
+        if sel {
+            p.bg(0, y, w, Tok::Sel);
+            p.t(1, y, "›", Tok::Acc, true);
+        }
+        let (mark, tok) = if *on {
+            ("[x]", Tok::Acc)
+        } else {
+            ("[ ]", Tok::Dim)
+        };
+        p.t(3, y, mark, tok, *on);
+        p.t(
+            7,
+            y,
+            &super::fit(title, (w - 8).max(4) as usize),
+            if *on { Tok::Fg } else { Tok::Mute },
+            sel,
+        );
+    }
+    if pv.more > 0 {
+        p.t(
+            7,
+            1 + pv.rows.len() as i32,
+            &format!("+ {} more", pv.more),
+            Tok::Dim,
+            false,
+        );
+    }
+}
+
+fn queue_rows(qv: &QueueView) -> usize {
+    usize::from(qv.input.is_some())
+        + qv.rows.len().max(1)
+        + usize::from(qv.more > 0)
+        + usize::from(qv.confirm)
+}
+
+fn queue(qv: &QueueView, p: &mut Painter) {
+    let w = p.w();
+    p.segs(
+        1,
+        0,
+        &[
+            segb("Queue", Tok::Fg),
+            seg(format!(" · {}", qv.project), Tok::Mute),
+        ],
+    );
+    p.rt(
+        w - 1,
+        0,
+        &format!("runs {} at a time, each in its own worktree", qv.limit),
+        Tok::Dim,
+        false,
+    );
+    let mut y = 1;
+    if let Some((text, attempts)) = &qv.input {
+        let tag = match attempts {
+            1 => "1 attempt".to_string(),
+            n => format!("best of {n}"),
+        };
+        let room = (w - 3 - 9 - len(&tag) as i32 - 3).max(1) as usize;
+        let e = p.segs(
+            3,
+            y,
+            &[
+                segb("new task ", Tok::Acc),
+                seg(super::fit_tail(text, room), Tok::Fg),
+            ],
+        );
+        p.caret(e, y);
+        p.rt(
+            w - 1,
+            y,
+            &tag,
+            if *attempts > 1 { Tok::Acc } else { Tok::Dim },
+            *attempts > 1,
+        );
+        y += 1;
+    }
+    if qv.rows.is_empty() {
+        p.t(
+            3,
+            y,
+            &super::fit(
+                "No tasks yet. a adds one: pebl starts it in a fresh worktree as soon as a slot is free.",
+                (w - 4).max(1) as usize,
+            ),
+            Tok::Mute,
+            false,
+        );
+        return;
+    }
+    let title_w = if w >= 100 { 40 } else { 26 };
+    for (i, r) in qv.rows.iter().enumerate() {
+        let yy = y + i as i32;
+        let sel = i == qv.sel;
+        if sel {
+            p.bg(0, yy, w, Tok::Sel);
+            p.t(1, yy, "›", Tok::Acc, true);
+        }
+        let (g, tok, bold) = match r.state {
+            TaskState::Pending => ("○", Tok::Mute, false),
+            TaskState::Running => ("●", Tok::Ok, false),
+            TaskState::Review => ("◆", Tok::Acc, true),
+            TaskState::Done => ("✓", Tok::Dim, false),
+            TaskState::Failed => ("✕", Tok::Err, false),
+        };
+        p.t(3, yy, g, tok, bold);
+        let best = if r.attempts > 1 {
+            format!(" ×{}", r.attempts)
+        } else {
+            String::new()
+        };
+        let e = p.t(
+            5,
+            yy,
+            &super::fit(&r.title, (title_w - 1 - len(&best) as i32).max(4) as usize),
+            if r.state == TaskState::Done {
+                Tok::Mute
+            } else {
+                Tok::Fg
+            },
+            sel,
+        );
+        p.t(e, yy, &best, Tok::Dim, false);
+        let dx = 5 + title_w;
+        let room = (w - dx - len(&r.age) as i32 - 3).max(4) as usize;
+        let dtok = match r.state {
+            TaskState::Review => Tok::Acc,
+            TaskState::Failed => Tok::Err,
+            _ => Tok::Mute,
+        };
+        p.t(dx, yy, &super::fit(&r.detail, room), dtok, false);
+        p.rt(w - 1, yy, &r.age, Tok::Dim, false);
+    }
+    let mut y = y + qv.rows.len() as i32;
+    if qv.more > 0 {
+        p.t(5, y, &format!("+ {} more", qv.more), Tok::Dim, false);
+        y += 1;
+    }
+    if qv.confirm {
+        p.t(
+            3,
+            y,
+            "x again discards its sessions and their worktrees",
+            Tok::Err,
+            true,
+        );
+    }
+}
+
+fn compare(cv: &CompareView, p: &mut Painter) {
+    let w = p.w();
+    let room = (w - 30).max(4) as usize;
+    p.segs(
+        1,
+        0,
+        &[
+            segb("Compare", Tok::Fg),
+            seg(format!(" · {}", super::fit(&cv.title, room)), Tok::Mute),
+        ],
+    );
+    let cols: [(&str, i32); 6] = [
+        ("checks", 0),
+        ("files", 8),
+        ("added", 15),
+        ("removed", 23),
+        ("tokens", 33),
+        ("time", 42),
+    ];
+    let x0 = (w - 48).max(28);
+    p.t(3, 1, "attempt", Tok::Dim, false);
+    for (label, dx) in cols {
+        p.t(x0 + dx, 1, label, Tok::Dim, false);
+    }
+    for (i, r) in cv.rows.iter().enumerate() {
+        let y = 2 + i as i32;
+        let sel = i == cv.sel;
+        if sel {
+            p.bg(0, y, w, Tok::Sel);
+            p.t(1, y, "›", Tok::Acc, true);
+        }
+        let (g, gt, gb) = super::glyph(r.status);
+        p.t(3, y, g, gt, gb);
+        p.t(
+            5,
+            y,
+            &super::fit_tail(&r.name, (x0 - 7).max(4) as usize),
+            Tok::Fg,
+            sel,
+        );
+        let (c, ct) = match r.check {
+            Some(CheckBadge::Passed) => ("✓", Tok::Ok),
+            Some(CheckBadge::Failed) => ("✕", Tok::Err),
+            Some(CheckBadge::Running) => ("…", Tok::Dim),
+            None => ("–", Tok::Dim),
+        };
+        p.t(x0 + 2, y, c, ct, false);
+        p.t(x0 + 8, y, &r.files.to_string(), Tok::Fg, false);
+        p.t(x0 + 15, y, &format!("+{}", r.adds), Tok::Ok, false);
+        p.t(x0 + 23, y, &format!("−{}", r.dels), Tok::Err, false);
+        p.t(x0 + 33, y, &r.tokens, Tok::Mute, false);
+        p.t(x0 + 42, y, &r.time, Tok::Mute, false);
+    }
+    if cv.confirm {
+        let name = cv.rows.get(cv.sel).map(|r| r.name.as_str()).unwrap_or("");
+        p.t(
+            3,
+            2 + cv.rows.len() as i32,
+            &format!("w again keeps {name} and discards the other attempts"),
+            Tok::Acc,
+            true,
+        );
+    }
+}
+
+fn ask_shown(av: &AskView, short: bool) -> usize {
+    av.rows.len().min(if short { 1 } else { 3 })
+}
+
+fn ask(av: &AskView, p: &mut Painter, short: bool) {
+    let w = p.w();
+    super::mascot::jel_head(p, 0, 1, 0);
+    p.segs(9, 0, &[segb("Ask jel", Tok::Fg)]);
+    if !short {
+        p.t(
+            9,
+            1,
+            "one line answers from your own Claude",
+            Tok::Dim,
+            false,
+        );
+        p.rt(
+            w - 1,
+            0,
+            "answers can include a key to act on",
+            Tok::Dim,
+            false,
+        );
+    }
+    let shown = ask_shown(av, short);
+    let rows = &av.rows[av.rows.len() - shown..];
+    for (i, r) in rows.iter().enumerate() {
+        let y = 2 + 2 * i as i32;
+        let last = i + 1 == rows.len();
+        let room = (w - 7).max(1) as usize;
+        if last {
+            p.segs(
+                3,
+                y,
+                &[
+                    segb("? ", Tok::Acc),
+                    seg(super::fit(&r.question, room), Tok::Fg),
+                ],
+            );
+        } else {
+            p.segs(
+                3,
+                y,
+                &[
+                    seg("? ", Tok::Dim),
+                    seg(super::fit(&r.question, room), Tok::Mute),
+                ],
+            );
+        }
+        let mut line = if last {
+            vec![seg("› ", Tok::Acc)]
+        } else {
+            Vec::new()
+        };
+        match (&r.answer, last) {
+            (None, _) => line.push(seg("thinking…", Tok::Dim)),
+            (Some(a), true) => {
+                let tail: Vec<Seg> = match &r.act {
+                    Some(act) => vec![
+                        seg("  ·  ", Tok::Dim),
+                        segb("enter", Tok::Acc),
+                        seg(format!(" {act}"), Tok::Mute),
+                    ],
+                    None => Vec::new(),
+                };
+                let room = room.saturating_sub(seg_len(&tail)).max(8);
+                line.push(seg(super::fit(a, room), Tok::Fg));
+                line.extend(tail);
+            }
+            (Some(a), false) => line.push(seg(super::fit(a, room), Tok::Mute)),
+        }
+        p.segs(5, y + 1, &line);
+    }
+    let y = 2 + 2 * shown as i32;
+    let x = p.segs(3, y, &[seg("> ", Tok::Fg)]);
+    let e = p.t(
+        x,
+        y,
+        &fit_left(&av.text, (w - x - 2).max(1) as usize),
+        Tok::Fg,
+        false,
+    );
+    p.caret(e, y);
+    if av.text.is_empty() {
+        let hint = if av.rows.is_empty() {
+            "  how do I…? what is waiting? which chat…?"
+        } else {
+            "  ask another, or esc"
+        };
+        p.t(e + 1, y, hint, Tok::Dim, false);
+    }
+}
+
+fn inbox_rows(iv: &InboxView) -> usize {
+    iv.rows.len().max(1) + usize::from(iv.more > 0)
+}
+
+fn inbox(iv: &InboxView, p: &mut Painter) {
+    let w = p.w();
+    p.segs(1, 0, &[segb("Needs you", Tok::Fg)]);
+    let summary = match (iv.total, iv.waiting) {
+        (0, _) => String::new(),
+        (t, 0) => format!("{t} to look at"),
+        (t, wt) if t == wt => format!("{wt} waiting"),
+        (t, wt) => format!("{wt} waiting · {t} in all"),
+    };
+    p.rt(w - 1, 0, &summary, Tok::Dim, false);
+    if iv.rows.is_empty() {
+        p.t(3, 1, "All clear. Nothing needs you.", Tok::Mute, false);
+        return;
+    }
+    let (proj_w, sess_w) = if w >= 100 { (16, 26) } else { (12, 18) };
+    for (i, r) in iv.rows.iter().enumerate() {
+        let y = 1 + i as i32;
+        let sel = i == iv.sel;
+        if sel {
+            p.bg(0, y, w, Tok::Sel);
+            p.t(1, y, "›", Tok::Acc, true);
+        }
+        let (g, tok, bold) = match r.kind {
+            NoticeKind::Waiting => ("◆", Tok::Acc, true),
+            NoticeKind::Error => ("✕", Tok::Err, false),
+            _ => ("✓", Tok::Ok, false),
+        };
+        p.t(3, y, g, tok, bold);
+        p.t(
+            5,
+            y,
+            &super::fit(&r.project, proj_w - 1),
+            if sel { Tok::Fg } else { Tok::Mute },
+            false,
+        );
+        let sx = 5 + proj_w as i32;
+        p.t(sx, y, &super::fit(&r.session, sess_w - 1), Tok::Fg, sel);
+        let dx = sx + sess_w as i32;
+        let room = (w - dx - len(&r.age) as i32 - 3).max(4) as usize;
+        let dtok = match r.kind {
+            NoticeKind::Waiting => Tok::Acc,
+            NoticeKind::Error => Tok::Err,
+            _ => Tok::Mute,
+        };
+        p.t(dx, y, &super::fit(&r.detail, room), dtok, false);
+        p.rt(w - 1, y, &r.age, Tok::Dim, false);
+    }
+    if iv.more > 0 {
+        p.t(
+            5,
+            1 + iv.rows.len() as i32,
+            &format!("+ {} more", iv.more),
+            Tok::Dim,
+            false,
+        );
+    }
+}
+
+fn prompts(pv: &PromptsView, p: &mut Painter, wide: bool) {
+    let w = p.w();
+    let target = vec![seg("→ ", Tok::Dim), seg(pv.target.clone(), Tok::Mute)];
+    let tw = seg_len(&target) as i32;
+    let count = format!("{} saved", pv.total);
+    let mut y = 0;
+    let (label, field) = match &pv.step {
+        PromptStep::Name { text, from } => (
+            segb(
+                match from {
+                    NameFrom::New => "new prompt name ",
+                    NameFrom::Last => "save last prompt as ",
+                    NameFrom::Typed => "save what you typed as ",
+                },
+                Tok::Acc,
+            ),
+            text.as_str(),
+        ),
+        PromptStep::Var { name, text, n, of } => (
+            segb(format!("{name} ({n} of {of}) "), Tok::Acc),
+            text.as_str(),
+        ),
+        _ => (seg("/ ", Tok::Acc), pv.query.as_str()),
+    };
+    if wide {
+        p.segs(1, y, &[segb("Prompts and recipes", Tok::Fg)]);
+        p.segs(w - 1 - tw, y, &target);
+        y += 1;
+    }
+    let x = match (&pv.step, wide) {
+        (_, true) => 3,
+        (PromptStep::Name { .. } | PromptStep::Var { .. }, false) => 1,
+        _ => p.segs(1, y, &[segb("prompts ", Tok::Fg)]),
+    };
+    let right = if wide { len(&count) as i32 } else { tw };
+    let room = (w - 1 - right - 3 - x - len(&label.0) as i32).max(1) as usize;
+    let e = p.segs(x, y, &[label, seg(super::fit_tail(field, room), Tok::Fg)]);
+    if !matches!(pv.step, PromptStep::ConfirmDelete) {
+        p.caret(e, y);
+    }
+    if wide {
+        p.rt(w - 1, y, &count, Tok::Dim, false);
+    } else {
+        p.segs(w - 1 - tw, y, &target);
+    }
+    y += if wide { 2 } else { 1 };
+    if pv.rows.is_empty() {
+        let typed = !pv.query.trim().is_empty();
+        let (first, second) = match (typed, pv.total) {
+            (true, _) => (
+                "Nothing matches. enter saves what you typed as a new prompt.",
+                "For a longer prompt, ctrl+a writes it in your editor.",
+            ),
+            (false, 0) => (
+                "No saved prompts yet. Type one here and press enter,",
+                "or ctrl+a to write it in your editor.",
+            ),
+            (false, _) => ("", ""),
+        };
+        let room = (w - 4).max(1) as usize;
+        p.t(3, y, &super::fit(first, room), Tok::Mute, false);
+        p.t(3, y + 1, &super::fit(second, room), Tok::Dim, false);
+        return;
+    }
+    let name_w: i32 = if wide { 24 } else { 18 };
+    for (i, r) in pv.rows.iter().enumerate() {
+        let yy = y + i as i32;
+        let sel = i == pv.sel;
+        if sel {
+            p.bg(0, yy, w, Tok::Sel);
+            p.t(1, yy, "›", Tok::Acc, true);
+        }
+        p.t(
+            3,
+            yy,
+            &super::fit(&r.name, (name_w - 2) as usize),
+            Tok::Fg,
+            sel,
+        );
+        let tag = match (r.steps, r.clipboard) {
+            (0, true) => "+ clipboard".to_string(),
+            (0, false) => String::new(),
+            (n, _) => format!("recipe · {n} steps"),
+        };
+        let tag = tag.as_str();
+        let room = (w - 3 - name_w - len(tag) as i32 - 3).max(4) as usize;
+        p.t(
+            3 + name_w,
+            yy,
+            &super::fit(&r.preview, room),
+            if sel { Tok::Mute } else { Tok::Dim },
+            false,
+        );
+        if !tag.is_empty() {
+            p.rt(w - 1, yy, tag, if sel { Tok::Acc } else { Tok::Dim }, false);
+        }
+    }
+    let foot = y + pv.rows.len() as i32 + 1;
+    if foot > p.h() - 3 {
+        return;
+    }
+    match (&pv.step, &pv.clip) {
+        (PromptStep::ConfirmDelete, _) => {
+            let name = pv.rows.get(pv.sel).map(|r| r.name.as_str()).unwrap_or("");
+            p.segs(
+                3,
+                foot,
+                &[
+                    seg("Delete ", Tok::Fg),
+                    segb(name.to_string(), Tok::Fg),
+                    seg("?  y deletes it, esc keeps it", Tok::Mute),
+                ],
+            );
+        }
+        (_, Clip::Empty) => {
+            p.t(
+                3,
+                foot,
+                "The clipboard is empty: copy the ticket or text first.",
+                Tok::Acc,
+                false,
+            );
+        }
+        (_, Clip::Text { first, lines }) => {
+            let more = match lines {
+                1 => String::new(),
+                n => format!(" · {n} lines"),
+            };
+            let room = (w - 3 - 11 - len(&more) as i32 - 1).max(4) as usize;
+            p.segs(
+                3,
+                foot,
+                &[
+                    seg("clipboard  ", Tok::Dim),
+                    seg(super::fit(first, room), Tok::Mute),
+                    seg(more, Tok::Dim),
+                ],
+            );
+        }
+        (_, Clip::Unused) => {}
+    }
 }
 
 fn search(sv: &SearchView, p: &mut Painter, wide: bool) {
@@ -493,14 +1094,31 @@ fn peek(pk: &Peek, p: &mut Painter) {
 }
 
 fn status_row(v: &View, p: &mut Painter, y: i32) {
+    let w = p.w();
+    let (left, right) = status_layout(v, w.max(0) as usize);
+    let x = p.segs(0, y, &left);
+    if let Mode::Filter { .. } | Mode::Note { .. } = v.mode {
+        p.caret(x, y);
+    }
+    p.segs(w - seg_len(&right) as i32 - 1, y, &right);
+}
+
+fn status_layout(v: &View, w: usize) -> (Vec<Seg>, Vec<Seg>) {
     let (mut left, mut right) = status(v);
-    let over = (seg_len(&left) + seg_len(&right) + 3).saturating_sub(p.w().max(0) as usize);
+    let over = (seg_len(&left) + seg_len(&right) + 3).saturating_sub(w);
     if over > 0 {
         if let Some(s) = right.iter_mut().find(|s| s.0 == v.path) {
             s.0 = fit_left(&s.0, len(&s.0).saturating_sub(over));
         }
     }
-    let room = (p.w().max(0) as usize).saturating_sub(seg_len(&right) + 3);
+    let mut cut = left.len();
+    for key in ["?", "alt+a"] {
+        if cut >= 4 && left[cut - 2].0 == key {
+            cut -= 3;
+        }
+    }
+    let tail = left.split_off(cut);
+    let room = w.saturating_sub(seg_len(&right) + seg_len(&tail) + 3);
     while seg_len(&left) > room && left.len() > 1 {
         while let Some(s) = left.pop() {
             if s.0 == " · " || left.len() <= 1 {
@@ -508,12 +1126,40 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
             }
         }
     }
-    let x = p.segs(0, y, &left);
-    if let Mode::Filter { .. } = v.mode {
-        p.caret(x, y);
+    left.extend(tail);
+    (left, right)
+}
+
+const SHELL_BUTTONS: [(&str, Tok, &str); 2] = [
+    ("+ split", Tok::Acc, "shell-new"),
+    ("× close", Tok::Mute, "shell-close"),
+];
+
+const CLICKS: [(&str, &str); 4] = [
+    ("+ split", "shell-new"),
+    ("× close", "shell-close"),
+    ("alt+a", "ask"),
+    (" ask jel", "ask"),
+];
+
+pub fn button_at(v: &View, w: u16, x: u16) -> Option<&'static str> {
+    let (left, right) = status_layout(v, w as usize);
+    let right_x = (w as usize).saturating_sub(seg_len(&right) + 1);
+    let mut at = Vec::new();
+    for (segs, mut start) in [(left, 0), (right, right_x)] {
+        for s in segs {
+            at.push((start, s.0.clone()));
+            start += len(&s.0);
+        }
     }
-    let w = p.w();
-    p.segs(w - seg_len(&right) as i32 - 1, y, &right);
+    let (_, label) = at
+        .iter()
+        .rev()
+        .find(|(start, label)| (*start..start + len(label)).contains(&(x as usize)))?;
+    CLICKS
+        .iter()
+        .find(|(l, _)| l == label)
+        .map(|(_, action)| *action)
 }
 
 pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
@@ -550,10 +1196,17 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         if let Some(n) = &next {
             list.push(("alt+r", n.as_str()));
         }
-        list.push(("alt+↑/↓", "resize"));
+        let many = v.shell.as_ref().is_some_and(|s| s.count > 1);
+        if many {
+            list.push(("alt+←/→", "switch"));
+        }
         list.push(("ctrl+t", "back to Claude"));
         let left = keys(&list);
-        let right = match &v.shell {
+        let mut right = match &v.shell {
+            Some(s) if many => vec![
+                segb(format!("shell {} of {}", s.at, s.count), Tok::Fg),
+                seg(format!(" · {}", s.shell), Tok::Mute),
+            ],
             Some(s) => vec![
                 segb("shell", Tok::Fg),
                 seg(" · ", Tok::Dim),
@@ -562,6 +1215,10 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ],
             None => Vec::new(),
         };
+        for (label, tok, _) in SHELL_BUTTONS {
+            right.push(seg("   ", Tok::Fg));
+            right.push(segb(label, tok));
+        }
         return (left, right);
     }
     if let Some(d) = v.resizing {
@@ -634,6 +1291,7 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ("j/k", "move"),
             ("a", "mark project"),
             ("enter", "write prompt"),
+            ("p", "saved prompt"),
             ("esc", "cancel"),
         ]),
         Mode::Broadcast(b) => {
@@ -644,6 +1302,77 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
                 ("ctrl+u", "clear"),
             ])
         }
+        Mode::Plan(pv) => {
+            let n = format!("queue {}", pv.picked);
+            keys(&[
+                ("space", "tick"),
+                ("a", "all"),
+                ("enter", n.as_str()),
+                ("esc", "cancel"),
+            ])
+        }
+        Mode::Queue(qv) if qv.input.is_some() => {
+            keys(&[("enter", "add"), ("tab", "attempts"), ("esc", "cancel")])
+        }
+        Mode::Queue(_) if short => keys(&[("a", "add"), ("enter", "open"), ("esc", "close")]),
+        Mode::Queue(_) => keys(&[
+            ("a", "add"),
+            ("enter", "open"),
+            ("d", "diff"),
+            ("D", "done"),
+            ("r", "retry"),
+            ("x", "remove"),
+            ("esc", "close"),
+        ]),
+        Mode::Compare(_) => keys(&[
+            ("enter", "open"),
+            ("d", "diff"),
+            ("w", "pick winner"),
+            ("esc", "back"),
+        ]),
+        Mode::Ask(av) => {
+            let act = av.text.is_empty() && av.rows.last().is_some_and(|r| r.act.is_some());
+            let mut list = vec![("enter", if act { "do it" } else { "ask" })];
+            if !av.rows.is_empty() {
+                list.push(("↑", if short { "prev" } else { "previous" }));
+            }
+            list.push(("esc", "close"));
+            keys(&list)
+        }
+        Mode::Inbox(iv) if iv.rows.is_empty() => keys(&[("esc", "close")]),
+        Mode::Inbox(_) if short => keys(&[("enter", "open"), ("p", "peek"), ("esc", "close")]),
+        Mode::Inbox(_) => keys(&[
+            ("enter", "open"),
+            ("p", "peek and answer"),
+            ("x", "dismiss"),
+            ("j/k", "move"),
+            ("esc", "close"),
+        ]),
+        Mode::Prompts(pv) => match &pv.step {
+            PromptStep::Name { .. } => keys(&[("enter", "save"), ("esc", "back")]),
+            PromptStep::Var { .. } => keys(&[("enter", "next"), ("esc", "back")]),
+            PromptStep::ConfirmDelete => keys(&[("y", "delete"), ("esc", "keep")]),
+            PromptStep::List if pv.rows.is_empty() => keys(&[
+                ("enter", "save as prompt"),
+                (if short { "^a" } else { "ctrl+a" }, "write in editor"),
+                ("esc", "close"),
+            ]),
+            PromptStep::List if short => keys(&[
+                ("enter", "send"),
+                ("tab", "type"),
+                ("^a", "add"),
+                ("esc", "close"),
+            ]),
+            PromptStep::List => keys(&[
+                ("enter", "send"),
+                ("tab", "type first"),
+                ("ctrl+a", "add"),
+                ("ctrl+e", "edit"),
+                ("ctrl+s", "save last"),
+                ("ctrl+d", "delete"),
+                ("esc", "close"),
+            ]),
+        },
         Mode::Search(sv) if !sv.query.trim().is_empty() && sv.rows.is_empty() => {
             keys(&[("tab", "all projects"), ("esc", "close")])
         }
@@ -652,6 +1381,13 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ("↑/↓", "choose"),
             ("tab", "scope"),
             ("esc", "close"),
+        ]),
+        Mode::Finish(f) if !f.conflicts.is_empty() => keys(&[
+            ("c", "resolve"),
+            ("m", "merge"),
+            ("p", "pull request"),
+            ("d", "discard"),
+            ("esc", "cancel"),
         ]),
         Mode::Finish(_) => keys(&[
             ("a", "commit"),
@@ -670,6 +1406,10 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             l
         }
         Mode::Filter { text } => vec![seg(" / ", Tok::Acc), seg(text.clone(), Tok::Fg)],
+        Mode::Note { project, text } => vec![
+            segb(format!(" note for {project}: "), Tok::Acc),
+            seg(super::fit_tail(text, if short { 24 } else { 60 }), Tok::Fg),
+        ],
         Mode::Normal if v.flash.is_some() => vec![seg(
             format!(" {}", v.flash.clone().unwrap_or_default()),
             Tok::Acc,
@@ -716,6 +1456,30 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             (k("ctrl+g", "^g"), "go to waiting"),
             (k("ctrl+q", "^q"), "quit"),
         ]),
+        Mode::Normal if !v.hints.is_empty() => {
+            let list: Vec<(String, String)> = v
+                .hints
+                .iter()
+                .enumerate()
+                .filter(|(i, (k, _))| !short || *i < 3 || k == "?" || k == "alt+a")
+                .map(|(_, (k, l))| {
+                    let k = if short {
+                        k.replace("ctrl+", "^")
+                    } else {
+                        k.clone()
+                    };
+                    let l = if short {
+                        l.split([':', '(']).next().unwrap_or(l).trim().to_string()
+                    } else {
+                        l.clone()
+                    };
+                    (k, l)
+                })
+                .collect();
+            let refs: Vec<(&str, &str)> =
+                list.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect();
+            keys(&refs)
+        }
         Mode::Normal if v.focus == crate::view::Focus::Sidebar && !short => keys(&[
             ("enter", "open"),
             ("p", "peek"),
@@ -753,6 +1517,15 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
         );
         return (left, right);
     }
+    if let Mode::Note { .. } = v.mode {
+        let list = if short {
+            vec![("enter", "add"), ("esc", "cancel")]
+        } else {
+            vec![("enter", "add"), ("ctrl+e", "all notes"), ("esc", "cancel")]
+        };
+        right.extend(keys(&list).into_iter().skip(1));
+        return (left, right);
+    }
     if let Some(m) = v.marking {
         right.push(segb(format!("{m} marked"), Tok::Acc));
         right.push(seg("   ", Tok::Fg));
@@ -779,6 +1552,11 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
     if waiting > 0 && !hidden && matches!(v.mode, Mode::Normal) {
         right.push(segb(format!("◆ {waiting} waiting"), Tok::Acc));
         right.push(seg(" ctrl+g", Tok::Fg));
+        if waiting > 1 {
+            right.push(seg(" · ", Tok::Dim));
+            right.push(seg("ctrl+y", Tok::Fg));
+            right.push(seg(" list", Tok::Mute));
+        }
         right.push(seg("   ", Tok::Fg));
     }
     if hidden && !v.limits.is_empty() {

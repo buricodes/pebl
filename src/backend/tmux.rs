@@ -1,5 +1,6 @@
 use super::{Arrangement, LivePane, SessionBackend, ShellPane, SpawnSpec, UiBackend, UiPanes};
 use anyhow::{bail, Context, Result};
+use std::collections::HashSet;
 use std::process::{Command, Stdio};
 
 pub const UI_SESSION: &str = "pebl-ui";
@@ -145,6 +146,12 @@ impl Tmux {
             .map(|s| s.lines().map(str::to_string).collect())
             .unwrap_or_default()
     }
+
+    pub fn client_pids(&self) -> Vec<u32> {
+        self.run(&["list-clients", "-F", "#{client_pid}"])
+            .map(|s| s.lines().filter_map(|l| l.trim().parse().ok()).collect())
+            .unwrap_or_default()
+    }
 }
 
 impl SessionBackend for Tmux {
@@ -203,7 +210,7 @@ impl SessionBackend for Tmux {
             "list-panes",
             "-a",
             "-F",
-            "#{pane_id}\t#{@pebl_sid}\t#{pane_dead}\t#{pane_dead_status}",
+            "#{pane_id}\t#{@pebl_sid}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_path}",
         ])?;
         Ok(out.lines().filter_map(parse_pane).collect())
     }
@@ -225,8 +232,17 @@ impl SessionBackend for Tmux {
     }
 
     fn spawn_shell(&self, sid: &str, cwd: &std::path::Path, size: (u16, u16)) -> Result<String> {
-        let name = format!("pebl-sh-{sid}");
-        let _ = self.run(&["kill-session", "-t", &format!("={name}")]);
+        let taken = self
+            .run(&["list-sessions", "-F", "#{session_name}"])
+            .unwrap_or_default();
+        let taken: HashSet<&str> = taken.lines().collect();
+        let name = (0..)
+            .map(|n| match n {
+                0 => format!("pebl-sh-{sid}"),
+                n => format!("pebl-sh-{sid}-{n}"),
+            })
+            .find(|n| !taken.contains(n.as_str()))
+            .unwrap_or_default();
         let pane = self.run(&[
             "new-session",
             "-d",
@@ -720,11 +736,16 @@ fn parse_pane(line: &str) -> Option<LivePane> {
     let sid = f.next().filter(|s| !s.is_empty()).map(str::to_string);
     let dead = f.next() == Some("1");
     let dead_status = f.next().and_then(|s| s.parse().ok());
+    let path = f
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
     Some(LivePane {
         id,
         sid,
         dead,
         dead_status,
+        path,
     })
 }
 
@@ -772,9 +793,14 @@ pub fn config(pebl: &str, truecolor: bool, cfg: &crate::config::Config) -> Strin
          set -g window-size latest\n\
          set -g detach-on-destroy off\n",
     );
+    c.push_str("set -su terminal-features\nset -as terminal-features ',*:extkeys'\n");
     if truecolor {
         c.push_str("set -as terminal-features ',*:RGB'\n");
     }
+    c.push_str("bind -n S-Enter if -F '#{@pebl_sid}' 'send-keys M-Enter' 'send-keys Enter'\n");
+    c.push_str(
+        "bind -n MouseDown1Pane if -F -t = '#{==:#{@pebl_role},bar}' { send-keys -M } { select-pane -t = ; send-keys -M }\n",
+    );
     if let Some(bg) = cfg.background() {
         let bg = sh_quote(bg);
         c.push_str(&format!(
@@ -808,8 +834,9 @@ pub fn config(pebl: &str, truecolor: bool, cfg: &crate::config::Config) -> Strin
         }
     }
     let mut only: Vec<(String, String, &str)> = vec![
-        ("M-Left".into(), "resize left".into(), "split"),
-        ("M-Right".into(), "resize right".into(), "split"),
+        ("M-Left".into(), "resize left".into(), "arrows"),
+        ("M-Right".into(), "resize right".into(), "arrows"),
+        ("M-t".into(), "shell-new".into(), "inshell"),
         ("M-Up".into(), "drawer-resize up".into(), "drawer"),
         ("M-Down".into(), "drawer-resize down".into(), "drawer"),
         ("M-r".into(), "run-next".into(), "runnable"),
@@ -849,14 +876,15 @@ mod tests {
 
     #[test]
     fn parses_panes() {
-        let p = parse_pane("%3\ts1\t1\t2").unwrap();
+        let p = parse_pane("%3\ts1\t1\t2\t/code/app").unwrap();
         assert_eq!(
             p,
             LivePane {
                 id: "%3".into(),
                 sid: Some("s1".into()),
                 dead: true,
-                dead_status: Some(2)
+                dead_status: Some(2),
+                path: Some("/code/app".into()),
             }
         );
         assert_eq!(parse_pane("%4\t\t0\t").unwrap().sid, None);
@@ -882,6 +910,31 @@ mod tests {
                 .iter()
                 .any(|p| p.id == pane && p.sid.as_deref() == Some("s1") && !p.dead));
             t.kill(&pane)?;
+            Ok(())
+        })();
+        let _ = t.kill_server();
+        res.unwrap();
+    }
+
+    #[test]
+    fn config_passes_shift_enter_through_and_survives_reloads() {
+        if Command::new("tmux").arg("-V").output().is_err() {
+            return;
+        }
+        let t = Tmux::new(format!("pebl-test-cfg-{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let conf = dir.path().join("tmux.conf");
+        std::fs::write(&conf, config("pebl", true, &Default::default())).unwrap();
+        let conf = conf.display().to_string();
+        let res = (|| -> Result<()> {
+            t.run(&["new-session", "-d", "-s", "x", "sleep 30"])?;
+            t.run(&["source-file", &conf])?;
+            t.run(&["source-file", &conf])?;
+            let features = t.run(&["show", "-s", "terminal-features"])?;
+            assert_eq!(features.matches("RGB").count(), 1, "{features}");
+            assert_eq!(features.matches("extkeys").count(), 1, "{features}");
+            let keys = t.run(&["list-keys", "-T", "root", "S-Enter"])?;
+            assert!(keys.contains("send-keys M-Enter"), "{keys}");
             Ok(())
         })();
         let _ = t.kill_server();
@@ -937,16 +990,25 @@ mod tests {
             t.arrange(&single)?;
             assert_eq!(t.widths()?.len(), 2);
             let shell = t.spawn_shell("s9", &std::env::temp_dir(), (80, 20))?;
+            let second = t.spawn_shell("s9", &std::env::temp_dir(), (80, 20))?;
+            assert_ne!(shell, second);
             let with_drawer = Arrangement {
-                drawer: Some((shell.clone(), 10)),
+                drawer: Some((vec![shell.clone(), second.clone()], 10)),
                 ..single.clone()
             };
             t.arrange(&with_drawer)?;
             let hs = t.heights()?;
             let ht = |p: &str| hs.iter().find(|(x, _)| x == p).map(|(_, h)| *h);
             assert_eq!(ht(&shell), Some(10));
+            assert_eq!(ht(&second), Some(10));
             assert_eq!(ht(&ui.stage), Some(h - 1 - 1 - 10 - 1));
-            assert!(t.shells()?.iter().any(|s| s.pane == shell && s.sid == "s9"));
+            let ws = t.widths()?;
+            let wd = |p: &str| ws.iter().find(|(x, _)| x == p).map(|(_, w)| *w);
+            assert_eq!(wd(&shell).zip(wd(&second)).map(|(a, b)| a + b + 1), Some(w));
+            let both = t.shells()?;
+            assert!([&shell, &second]
+                .iter()
+                .all(|p| both.iter().any(|s| &s.pane == *p && s.sid == "s9")));
             t.arrange(&single)?;
             assert_eq!(t.widths()?.len(), 2);
             Ok(())

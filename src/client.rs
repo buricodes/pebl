@@ -19,8 +19,13 @@ type Writer = Arc<Mutex<Option<UnixStream>>>;
 pub fn run(role: Role) -> Result<()> {
     terminal::enable_raw_mode()?;
     let mut out = std::io::stdout();
-    execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;
-    let mouse = matches!(role, Role::Sidebar | Role::Tabs);
+    execute!(
+        out,
+        terminal::EnterAlternateScreen,
+        cursor::Hide,
+        event::EnableBracketedPaste
+    )?;
+    let mouse = matches!(role, Role::Sidebar | Role::Tabs | Role::Bar);
     if mouse {
         execute!(out, event::EnableMouseCapture)?;
     }
@@ -30,6 +35,7 @@ pub fn run(role: Role) -> Result<()> {
     }
     let _ = execute!(
         std::io::stdout(),
+        event::DisableBracketedPaste,
         cursor::Show,
         terminal::LeaveAlternateScreen
     );
@@ -62,16 +68,24 @@ fn run_loop(role: Role) -> Result<()> {
 
     let mut view: Option<View> = None;
     let mut bell = None;
+    let mut osc: Option<Option<u64>> = None;
     let mut redraw = true;
     let started = std::time::Instant::now();
     let mut last_frame = u64::MAX;
     loop {
         while let Ok(v) = rx.try_recv() {
             if let (Some(v), Role::Sidebar) = (&v, role) {
-                if !cfg!(target_os = "macos") && bell.is_some_and(|b| v.bell > b) {
+                if bell.is_some_and(|b| v.bell > b) {
                     let _ = std::io::stdout().write_all(b"\x07");
                 }
                 bell = Some(v.bell);
+                let seq = v.osc.as_ref().map(|(n, _)| *n);
+                if let (Some(prev), Some((n, text))) = (osc, &v.osc) {
+                    if prev != Some(*n) {
+                        let _ = std::io::stdout().write_all(osc_notification(text).as_bytes());
+                    }
+                }
+                osc = Some(seq);
             }
             view = v;
             redraw = true;
@@ -115,29 +129,39 @@ fn run_loop(role: Role) -> Result<()> {
             }
             Event::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left) => {
                 let h = term.size().map(|s| s.height).unwrap_or(0);
+                let w = term.size().map(|s| s.width).unwrap_or(0);
                 let pet = view
                     .as_ref()
-                    .and_then(|v| sidebar::pet_rows(v, h))
+                    .and_then(|v| sidebar::pet_rows(v, w, h))
                     .is_some_and(|(a, b)| m.row >= a && m.row <= b);
-                if role == Role::Tabs {
+                if role == Role::Bar {
+                    let button = view
+                        .as_ref()
+                        .filter(|_| m.row + 1 == h)
+                        .and_then(|v| bar::button_at(v, w, m.column));
+                    if let Some(action) = button {
+                        let _ = crate::ipc::ctl(&paths::sock(), &[action.into()]);
+                    }
+                    None
+                } else if role == Role::Tabs {
                     Some(Input::Click {
                         x: m.column,
                         y: m.row,
                     })
                 } else if pet {
-                    let _ = crate::ipc::ctl(&paths::sock(), &["waiting".into()]);
+                    let _ = crate::ipc::ctl(&paths::sock(), &["pet".into()]);
                     None
                 } else if m.row + 2 == h {
                     Some(Input::Key(Key::plain(KeyCode::Char('n'))))
                 } else if m.row + 1 == h {
                     Some(Input::Key(Key::plain(KeyCode::Char('o'))))
                 } else {
-                    let w = term.size().map(|s| s.width).unwrap_or(0);
                     view.as_ref()
                         .and_then(|v| sidebar::list_row(v, w, h, m.row))
                         .map(|y| Input::Click { x: m.column, y })
                 }
             }
+            Event::Paste(text) => Some(Input::Paste(text)),
             Event::Resize(..) => {
                 redraw = true;
                 None
@@ -150,4 +174,9 @@ fn run_loop(role: Role) -> Result<()> {
             }
         }
     }
+}
+
+fn osc_notification(text: &str) -> String {
+    let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+    format!("\x1bPtmux;\x1b\x1b]9;{clean}\x07\x1b\\")
 }

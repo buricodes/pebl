@@ -1,0 +1,28 @@
+---
+source: src/ui/screen.rs
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │
+   ◆ migrate-staging  │
+   ○ docs-pass        │
+                      │ > refactor the auth middleware to use the new session st
+ ▾ billing-svc      3 │
+   ● onboarding-flow  │ ● Update(src/middleware/auth.ts)
+   ✕ e2e-tests        │   ⎿  Updated src/middleware/auth.ts with 3 additions
+   ○ a11y-audit       │
+                      │ ✻ Refactoring… (47s · esc to interrupt)
+ ▸ infra            3 │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ ▄▆██▆▄  Ask jel
+ █O██O█
+   ? which chat is waiting on me?
+     › thinking…
+   >    ask another, or esc
+────────────────────────────────────────────────────────────────────────────────
+ enter ask · ↑ prev · esc close                                   ◆ 1  4 active

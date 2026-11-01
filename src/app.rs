@@ -1,3 +1,14 @@
+mod ask_jel;
+mod attention;
+mod auto_checks;
+mod hints;
+mod notes;
+mod recipe_runner;
+mod replay;
+mod reviewer;
+mod saved_prompts;
+mod task_queue;
+
 use crate::backend::{Arrangement, SessionBackend, SpawnSpec, UiBackend, UiPanes};
 use crate::ipc::{Input, Key, KeyCode, Role};
 use crate::model::{age, now, tilde, untilde, Session, State, Status};
@@ -8,8 +19,9 @@ use crate::view::{
 };
 use crate::{complete, git, history, paths, status};
 use anyhow::{anyhow, bail, Result};
+use saved_prompts::Picker;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const FLASH_FOR: Duration = Duration::from_secs(4);
@@ -24,6 +36,13 @@ const SEARCH_ROWS: usize = 6;
 pub enum CurRef {
     Project(String),
     Session(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Place {
+    Project,
+    Worktree,
+    In(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -69,7 +88,36 @@ enum IMode {
         marks: Vec<String>,
         text: String,
     },
+    Prompts(Picker),
+    Inbox {
+        sel: usize,
+    },
+    Note {
+        pid: String,
+        text: String,
+    },
+    Queue {
+        pid: String,
+        sel: usize,
+        input: Option<(String, u8)>,
+        confirm: bool,
+    },
+    Plan {
+        sid: String,
+        tasks: Vec<(String, bool)>,
+        sel: usize,
+    },
+    Compare {
+        task: String,
+        sel: usize,
+        stats: Vec<task_queue::Stat>,
+        confirm: bool,
+    },
     DrawerResize,
+    Ask {
+        text: String,
+        back: usize,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -82,6 +130,22 @@ const SHELLS: [&str; 10] = [
     "zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu", "login", "xonsh",
 ];
 const MIN_DRAWER: u16 = 6;
+const MIN_SHELL_W: u16 = 24;
+
+fn by_session(list: &[crate::backend::ShellPane]) -> HashMap<String, Vec<String>> {
+    let mut sorted: Vec<&crate::backend::ShellPane> = list.iter().collect();
+    sorted.sort_by_key(|sp| {
+        (
+            sp.pane.trim_start_matches('%').parse::<u64>().ok(),
+            sp.pane.clone(),
+        )
+    });
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for sp in sorted {
+        out.entry(sp.sid.clone()).or_default().push(sp.pane.clone());
+    }
+    out
+}
 
 #[derive(Clone, Debug)]
 pub struct Env {
@@ -90,6 +154,14 @@ pub struct Env {
     pub settings: PathBuf,
     pub sock: PathBuf,
     pub editor: String,
+    pub prompts: PathBuf,
+    pub memory: PathBuf,
+    pub reviews: PathBuf,
+    pub recipes: PathBuf,
+    pub timeline: PathBuf,
+    pub detect_checks: bool,
+    pub clipboard: fn() -> Option<String>,
+    pub ask: fn(&str, &str, &str) -> Result<String>,
     pub notify: crate::config::Notify,
 }
 
@@ -111,6 +183,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     history: Vec<(PathBuf, usize)>,
     flash: Option<(String, Instant)>,
     bell: u64,
+    osc: Option<(u64, String)>,
     pub color: ColorMode,
     dead: HashSet<String>,
     stale: HashMap<String, (Status, u8)>,
@@ -138,16 +211,29 @@ pub struct App<B: SessionBackend + UiBackend> {
     found: Option<crate::search::Results>,
     queued: HashMap<String, Vec<String>>,
     pub search_root: Option<PathBuf>,
-    shells: HashMap<String, String>,
+    shells: HashMap<String, Vec<String>>,
+    shell_focus: Option<String>,
     drawer: HashSet<String>,
     drawer_h: Option<u16>,
-    drawer_shown: Option<String>,
+    drawer_shown: Vec<String>,
     shell_run: HashMap<String, ShellRun>,
     runnable: HashMap<String, (Vec<String>, usize)>,
     flags: HashMap<&'static str, bool>,
     bar_h: u16,
     prev_active: Option<String>,
     pub update: Option<String>,
+    saved: Vec<crate::prompts::Prompt>,
+    recipes: Vec<crate::recipes::Recipe>,
+    clip: Option<String>,
+    last_prompt: HashMap<String, String>,
+    checks: HashMap<String, auto_checks::CheckState>,
+    checks_done: auto_checks::Finished,
+    reviewers: HashMap<String, String>,
+    sent: HashMap<String, Instant>,
+    snapshots: replay::Snapshots,
+    asked: Vec<ask_jel::Asked>,
+    ask_seq: u64,
+    answers: ask_jel::Answers,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -165,7 +251,8 @@ struct Pending {
     at: u64,
     desktop: bool,
     phone: bool,
-    chimed: bool,
+    rung: bool,
+    watched: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -180,6 +267,7 @@ pub struct Outgoing {
     pub title: String,
     pub body: String,
     pub channel: Channel,
+    pub away_only: bool,
 }
 
 impl<B: SessionBackend + UiBackend> App<B> {
@@ -202,6 +290,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             history: Vec::new(),
             flash: None,
             bell: 0,
+            osc: None,
             color: ColorMode::Truecolor,
             dead: HashSet::new(),
             stale: HashMap::new(),
@@ -230,21 +319,32 @@ impl<B: SessionBackend + UiBackend> App<B> {
             queued: HashMap::new(),
             search_root: None,
             shells: HashMap::new(),
+            shell_focus: None,
             drawer: HashSet::new(),
             drawer_h: None,
-            drawer_shown: None,
+            drawer_shown: Vec::new(),
             shell_run: HashMap::new(),
             runnable: HashMap::new(),
             flags: HashMap::new(),
             bar_h: 1,
             prev_active: None,
             update: None,
+            saved: Vec::new(),
+            recipes: Vec::new(),
+            clip: None,
+            last_prompt: HashMap::new(),
+            checks: HashMap::new(),
+            checks_done: Default::default(),
+            reviewers: HashMap::new(),
+            sent: HashMap::new(),
+            snapshots: Default::default(),
+            asked: Vec::new(),
+            ask_seq: 0,
+            answers: Default::default(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
-            for sp in list {
-                app.shells.insert(sp.sid, sp.pane);
-            }
+            app.shells = by_session(&list);
         }
         app.adopt_ui();
         app.refresh_panes();
@@ -300,6 +400,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     pub fn handle_ctl(&mut self, args: &[String]) -> String {
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Some(first) = a.first() {
+            self.note_use(first);
+        }
         let res = match a.as_slice() {
             ["ensure-ui", cwd, w, h, color] => {
                 self.ensure_ui(cwd, w, h, color).map(|_| "ok".into())
@@ -330,6 +433,15 @@ impl<B: SessionBackend + UiBackend> App<B> {
             ["next"] => self.cycle(1).map(|_| String::new()),
             ["prev"] => self.cycle(-1).map(|_| String::new()),
             ["waiting"] => self.jump_waiting().map(|_| String::new()),
+            ["ask"] => {
+                self.start_ask();
+                Ok(String::new())
+            }
+            ["pet"] if self.attention().is_empty() => {
+                self.start_ask();
+                Ok(String::new())
+            }
+            ["pet"] => self.jump_waiting().map(|_| String::new()),
             ["new-session"] => self.start_new_session(false).map(|_| String::new()),
             ["new-project"] => {
                 self.start_new_project();
@@ -382,12 +494,15 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 })
             }
             ["review", sid] => self.review(sid).map(|_| String::new()),
+            ["restore", sid, to] => self.restore_checkpoint(sid, to),
             ["finish", sid] => self.start_finish(sid).map(|_| String::new()),
             ["shell"] => self.toggle_shell().map(|_| String::new()),
+            ["shell-new"] => self.new_shell().map(|_| String::new()),
+            ["shell-close"] => self.close_shell().map(|_| String::new()),
             ["run-next"] => self.run_next().map(|_| String::new()),
             ["shell-to-claude"] => self.shell_to_claude().map(|_| String::new()),
             ["drawer-resize", dir] => {
-                if self.drawer_shown.is_none() {
+                if self.drawer_shown.is_empty() {
                     Err(anyhow!("open the shell first (ctrl+t)"))
                 } else {
                     self.mode = IMode::DrawerResize;
@@ -398,6 +513,25 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             ["search"] => {
                 self.start_search();
+                Ok(String::new())
+            }
+            ["prompts"] => self.start_prompts().map(|_| String::new()),
+            ["queue"] => self.start_queue().map(|_| String::new()),
+            ["queue-add", project, attempts, prompt] => {
+                let pid = self.project_for(project);
+                pid.and_then(|pid| {
+                    let n = attempts.parse::<u8>().unwrap_or(1);
+                    let id = self.queue_add(&pid, prompt, n)?;
+                    self.run_queue();
+                    let t = self.st.tasks.iter().find(|t| t.id == id);
+                    Ok(t.map(|t| format!("queued “{}”", t.title))
+                        .unwrap_or_default())
+                })
+            }
+            ["queue-ls"] => Ok(self.queue_ls()),
+            ["recipe-run", project, name, vars @ ..] => self.recipe_from_cli(project, name, vars),
+            ["inbox"] => {
+                self.start_inbox();
                 Ok(String::new())
             }
             ["mark"] => {
@@ -431,6 +565,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             ["column", n] => {
                 self.focus_column(n.parse::<usize>().unwrap_or(1).saturating_sub(1));
+                Ok(String::new())
+            }
+            ["resize", dir] if self.focus == Focus::Shell && self.drawer_shown.len() > 1 => {
+                self.step_shell(if *dir == "left" { -1 } else { 1 });
                 Ok(String::new())
             }
             ["resize", dir] => {
@@ -567,6 +705,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let Some(cur) = self.st.session(sid).map(|s| s.status) else {
             return;
         };
+        self.record_hook(sid, event, payload);
         match event {
             "PreToolUse" | "PermissionRequest" => {
                 if let Some(t) = payload.get("tool_name").and_then(|t| t.as_str()) {
@@ -575,11 +714,22 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             "UserPromptSubmit" => {
                 self.tool.insert(sid.into(), "thinking".into());
+                if let Some(p) = payload.get("prompt").and_then(|p| p.as_str()) {
+                    if !p.trim().is_empty() {
+                        self.last_prompt.insert(sid.into(), p.trim().to_string());
+                    }
+                }
+                self.sent.remove(sid);
+                self.prompt_submitted(sid);
             }
             "PostToolUse" => {
                 self.tool.insert(sid.into(), "thinking".into());
             }
-            "Stop" | "StopFailure" | "SessionEnd" => {
+            "Stop" => {
+                self.tool.remove(sid);
+                self.turn_ended(sid);
+            }
+            "StopFailure" | "SessionEnd" => {
                 self.tool.remove(sid);
             }
             _ => {}
@@ -587,9 +737,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let Some(new) = status::from_hook(event, payload, cur) {
             if self.st.set_status(sid, new) {
                 self.stale.remove(sid);
-                if new == Status::Waiting && !self.watching(sid) && !self.muted {
-                    self.bell += 1;
-                }
             }
         }
         if event == "SessionEnd" {
@@ -606,6 +753,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Ok(())
             }
             Input::Click { x: _, y } => self.click(y),
+            Input::Paste(text) => self.paste(role, &text),
         };
         if let Err(e) = res {
             self.flash(format!("{e:#}"));
@@ -627,7 +775,15 @@ impl<B: SessionBackend + UiBackend> App<B> {
             self.check_ui();
         }
         self.refresh_peek();
+        if matches!(self.mode, IMode::Prompts(_)) && self.ticks.is_multiple_of(2) {
+            self.refresh_prompts();
+        }
         self.refresh_shells();
+        self.collect_checks();
+        self.collect_answers();
+        self.collect_snapshots();
+        self.run_queue();
+        self.collect_reviews();
         self.deliver_queued();
         self.notify();
         if self.ticks.is_multiple_of(3) {
@@ -705,8 +861,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
         } else {
             Focus::Main
         };
-        if self.shells.values().any(|p| p == pane) {
+        if self.shells.values().flatten().any(|p| p == pane) {
             self.focus = Focus::Shell;
+            self.shell_focus = Some(pane.to_string());
             self.col = 0;
         }
         if self.focus == Focus::Main && !self.cols.is_empty() {
@@ -737,7 +894,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
             Focus::Sidebar => Some(ui.sidebar.clone()),
             Focus::Bar => Some(ui.bar.clone()),
             Focus::Main => self.focused_pane(),
-            Focus::Shell => self.drawer_shown.clone(),
+            Focus::Shell => self
+                .active
+                .as_deref()
+                .and_then(|sid| self.current_shell(sid))
+                .filter(|p| self.drawer_shown.contains(p)),
         };
         if let Some(t) = target {
             let _ = self.be.select(&t);
@@ -774,7 +935,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn dragged(&mut self) {
-        if let Some(d) = self.drawer_shown.clone() {
+        if let Some(d) = self.drawer_shown.first().cloned() {
             if let Ok(hs) = self.be.heights() {
                 if let Some((_, h)) = hs.iter().find(|(p, _)| *p == d) {
                     if *h <= 2 {
@@ -882,13 +1043,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
         for (p, w) in panes.iter().zip(widths.iter().skip(1)) {
             cols.push((p.clone(), *w));
         }
-        let drawer = self.drawer_pane();
+        let drawer = self.drawer_panes();
         let a = Arrangement {
             win: self.win,
             sidebar: self.sidebar_w().map(|w| (ui.sidebar.clone(), w)),
             tabs: tabs.filter(|_| cols.len() > 1),
             cols,
-            drawer: drawer.clone().map(|p| (p, self.drawer_height())),
+            drawer: (!drawer.is_empty()).then(|| (drawer.clone(), self.drawer_height())),
             bar: (ui.bar.clone(), {
                 self.bar_h = crate::ui::bar::height(&self.view());
                 self.bar_h
@@ -1049,30 +1210,29 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             let watched = self.focus == Focus::Main
                 && (self.active.as_deref() == Some(s.id.as_str()) || self.cols.contains(&s.id));
-            let note = |kind| Pending {
-                sid: s.id.clone(),
-                kind,
-                at: t,
-                desktop: false,
-                phone: false,
-                chimed: false,
+            let kind = match (prev, s.status) {
+                (Some(_), Status::Waiting) => Some(NoticeKind::Waiting),
+                (Some(Status::Running | Status::Waiting), Status::Idle) => Some(NoticeKind::Done),
+                (Some(_), Status::Error) => Some(NoticeKind::Error),
+                _ => None,
             };
-            match (prev, s.status) {
-                (Some(_), Status::Waiting) if !watched => {
-                    self.pending.push(note(NoticeKind::Waiting));
+            if let Some(kind) = kind {
+                if !watched && kind != NoticeKind::Waiting {
+                    self.alerts.insert(s.id.clone(), (kind, t));
                 }
-                (Some(Status::Running | Status::Waiting), Status::Idle) if !watched => {
-                    self.alerts.insert(s.id.clone(), (NoticeKind::Done, t));
-                    self.pending.push(note(NoticeKind::Done));
-                }
-                (Some(_), Status::Error) if !watched => {
-                    self.alerts.insert(s.id.clone(), (NoticeKind::Error, t));
-                    self.pending.push(note(NoticeKind::Error));
-                }
-                (_, Status::Running | Status::Waiting) => {
-                    self.alerts.remove(&s.id);
-                }
-                _ => {}
+                self.pending.push(Pending {
+                    sid: s.id.clone(),
+                    kind,
+                    at: t,
+                    desktop: false,
+                    phone: false,
+                    rung: false,
+                    watched,
+                });
+            }
+            if (kind.is_none() || watched) && matches!(s.status, Status::Running | Status::Waiting)
+            {
+                self.alerts.remove(&s.id);
             }
         }
         self.alerts.retain(|sid, (k, at)| {
@@ -1088,12 +1248,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     fn notify(&mut self) {
         let cfg = self.env.notify.clone();
-        if self.muted || (!cfg.desktop && !cfg.chime && cfg.phone.is_empty()) {
+        if self.muted || !cfg.anything() {
             self.pending.clear();
             return;
         }
         let t = now();
         let mut out = Vec::new();
+        let (mut rings, mut osc) = (0, None);
         let watched: HashSet<String> = self
             .st
             .sessions
@@ -1107,16 +1268,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
             let Some(s) = st.session(&p.sid) else {
                 return false;
             };
-            if watched.contains(&p.sid) {
-                return false;
-            }
-            let live = match p.kind {
-                NoticeKind::Waiting => s.status == Status::Waiting,
-                _ => alerts.contains_key(&p.sid),
-            };
-            if !live {
-                return false;
-            }
             let project = st
                 .project(&s.project)
                 .map(|p| p.name.clone())
@@ -1127,21 +1278,64 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 _ => format!("{} finished", s.name),
             };
             let title = format!("pebl · {project}");
-            let sound = cfg.sound_for(p.kind);
-            if let (Some(sound), false) = (&sound, p.chimed) {
-                p.chimed = true;
-                out.push(Outgoing {
-                    title: sound.clone(),
-                    body: String::new(),
-                    channel: Channel::Chime,
-                });
+            if p.watched {
+                let still = match p.kind {
+                    NoticeKind::Waiting => Status::Waiting,
+                    NoticeKind::Error => Status::Error,
+                    _ => Status::Idle,
+                };
+                if s.status == still {
+                    out.extend(cfg.sound_for(p.kind).map(|sound| Outgoing {
+                        title: sound,
+                        body: String::new(),
+                        channel: Channel::Chime,
+                        away_only: true,
+                    }));
+                    if cfg.desktop.on(p.kind) {
+                        out.push(Outgoing {
+                            title,
+                            body,
+                            channel: Channel::Desktop,
+                            away_only: true,
+                        });
+                    }
+                }
+                return false;
             }
-            if cfg.desktop && !p.desktop {
+            if watched.contains(&p.sid) {
+                return false;
+            }
+            let live = match p.kind {
+                NoticeKind::Waiting => s.status == Status::Waiting,
+                _ => alerts.contains_key(&p.sid),
+            };
+            if !live {
+                return false;
+            }
+            if !p.rung {
+                p.rung = true;
+                if let Some(sound) = cfg.sound_for(p.kind) {
+                    out.push(Outgoing {
+                        title: sound,
+                        body: String::new(),
+                        channel: Channel::Chime,
+                        away_only: false,
+                    });
+                }
+                if cfg.bell.on(p.kind) {
+                    rings += 1;
+                }
+                if cfg.osc.on(p.kind) {
+                    osc = Some(format!("{title}: {body}"));
+                }
+            }
+            if cfg.desktop.on(p.kind) && !p.desktop {
                 p.desktop = true;
                 out.push(Outgoing {
                     title: title.clone(),
                     body: body.clone(),
                     channel: Channel::Desktop,
+                    away_only: false,
                 });
             }
             let phone_due = !cfg.phone.is_empty()
@@ -1153,12 +1347,40 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     title,
                     body,
                     channel: Channel::Phone,
+                    away_only: false,
                 });
             }
             let phone_left = !cfg.phone.is_empty() && p.kind != NoticeKind::Done && !p.phone;
-            (cfg.desktop && !p.desktop) || phone_left
+            (cfg.desktop.on(p.kind) && !p.desktop) || phone_left
         });
         self.outbox.extend(out);
+        self.bell += rings;
+        if let Some(text) = osc {
+            let n = self.osc.as_ref().map_or(1, |(n, _)| n + 1);
+            self.osc = Some((n, text));
+        }
+    }
+
+    fn note_use(&mut self, feature: &str) {
+        if crate::tips::tracks(feature) && !self.st.used.contains(feature) {
+            self.st.used.insert(feature.to_string());
+        }
+    }
+
+    fn tip(&self, counts: &Counts) -> Option<crate::view::TipView> {
+        if self.muted || self.mascot.is_none() {
+            return None;
+        }
+        if self.notice(counts).kind != NoticeKind::Idle {
+            return None;
+        }
+        let (i, t) = crate::tips::pick(&self.st.used, now());
+        Some(crate::view::TipView {
+            key: t.key.into(),
+            text: t.text.into(),
+            at: i + 1,
+            total: crate::tips::TIPS.len(),
+        })
     }
 
     fn notice(&self, counts: &Counts) -> Notice {
@@ -1176,14 +1398,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .collect();
         waiting.sort_by_key(|s| s.since);
         if let Some(s) = waiting.first() {
-            let detail = match self.tool.get(&s.id).map(String::as_str) {
-                Some("thinking") | None => "waiting for input".to_string(),
-                Some(t) => format!("wants to run {t}"),
-            };
             return Notice {
                 kind: NoticeKind::Waiting,
                 session: s.name.clone(),
-                detail,
+                detail: self.waiting_detail(&s.id),
                 count: waiting.len(),
                 more: waiting.len() - 1,
             };
@@ -1196,16 +1414,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 .map(|(sid, (_, at))| (sid.clone(), *at))
         };
         if let Some((sid, _)) = newest(NoticeKind::Error) {
-            let detail = self
-                .st
-                .session(&sid)
-                .and_then(|s| s.exit_code)
-                .map(|c| format!("exit {c}"))
-                .unwrap_or_else(|| "stopped with an error".into());
             return Notice {
                 kind: NoticeKind::Error,
                 session: name(&sid),
-                detail,
+                detail: self.error_detail(&sid),
                 count: 1,
                 more: 0,
             };
@@ -1276,7 +1488,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Err(e) => self.flash(format!("{e:#}")),
             }
         }
-        if self.drawer_pane() != self.drawer_shown {
+        if self.drawer_panes() != self.drawer_shown {
             self.apply_layout();
         }
     }
@@ -1369,6 +1581,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
     fn refresh_panes(&mut self) {
         let Ok(live) = self.be.list() else { return };
         crate::store::reconcile(&mut self.st, &live);
+        for (from, to) in crate::store::follow_moves(&mut self.st, &live, |p| p.is_dir()) {
+            self.flash(format!(
+                "{} moved to {}; pebl follows it",
+                tilde(&from),
+                tilde(&to)
+            ));
+        }
         self.dead = live
             .iter()
             .filter(|p| p.dead)
@@ -1431,6 +1650,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             "--settings".into(),
             self.env.settings.display().to_string(),
         ];
+        argv.extend(self.memory_args(&s.project));
         if resume {
             argv.extend(["--resume".into(), s.claude_id.clone()]);
         } else {
@@ -1452,6 +1672,23 @@ impl<B: SessionBackend + UiBackend> App<B> {
         prompt: &str,
         worktree: bool,
     ) -> Result<String> {
+        let place = if worktree {
+            Place::Worktree
+        } else {
+            Place::Project
+        };
+        let sid = self.create_session(pid, name, prompt, place)?;
+        self.activate(&sid);
+        Ok(sid)
+    }
+
+    fn create_session(
+        &mut self,
+        pid: &str,
+        name: &str,
+        prompt: &str,
+        place: Place,
+    ) -> Result<String> {
         let p = self
             .st
             .project(pid)
@@ -1463,7 +1700,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         } else {
             name.trim().to_string()
         };
-        let wt = if worktree {
+        let wt = if place == Place::Worktree {
             let dir = if auto_name {
                 format!("session-{}", self.st.sessions_of(pid).count() + 1)
             } else {
@@ -1485,12 +1722,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
             name,
             claude_id: uuid::Uuid::new_v4().to_string(),
             pane: None,
-            cwd: wt.clone().unwrap_or(p.path.clone()),
+            cwd: match place {
+                Place::In(dir) => dir,
+                _ => wt.clone().unwrap_or(p.path.clone()),
+            },
             worktree: wt,
             status: Status::Idle,
             since: now(),
             exit_code: None,
             auto_name,
+            reviews: None,
         };
         let mut argv = self.claude_argv(&s, prompt, false);
         if let Some(w) = &s.worktree {
@@ -1512,7 +1753,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
             s.status = Status::Running;
         }
         self.st.sessions.push(s);
-        self.activate(&sid);
         Ok(sid)
     }
 
@@ -1559,10 +1799,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 if let Some(p) = &s.pane {
                     let _ = self.be.kill(p);
                 }
-                if let Some(p) = self.shells.remove(sid.as_str()) {
+                for p in self.shells.remove(sid.as_str()).unwrap_or_default() {
                     let _ = self.be.kill(&p);
                 }
                 self.drawer.remove(sid.as_str());
+                self.forget_timeline(sid, &s.cwd);
                 self.st.sessions.retain(|x| x.id != *sid);
                 let next = pos
                     .and_then(|i| {
@@ -1671,18 +1912,43 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
+    fn project_for(&mut self, project: &str) -> Result<String> {
+        if project.is_empty() {
+            return self
+                .current_project()
+                .ok_or_else(|| anyhow!("no project; run `pebl add` first"));
+        }
+        if let Some(p) = self.st.projects.iter().find(|p| p.name == project) {
+            return Ok(p.id.clone());
+        }
+        let path =
+            std::fs::canonicalize(untilde(project)).map_err(|e| anyhow!("{project}: {e}"))?;
+        if let Some(p) = self.st.project_by_path(&path) {
+            return Ok(p.id.clone());
+        }
+        Ok(self.st.add_project(path, None))
+    }
+
     fn new_from_cli(&mut self, project: &str, name: &str, prompt: &str) -> Result<String> {
-        let pid = if project.is_empty() {
-            self.current_project()
-                .ok_or_else(|| anyhow!("no project; run `pebl add` first"))?
-        } else if let Some(p) = self.st.projects.iter().find(|p| p.name == project) {
-            p.id.clone()
-        } else {
-            let path =
-                std::fs::canonicalize(untilde(project)).map_err(|e| anyhow!("{project}: {e}"))?;
-            self.st.add_project(path, None)
-        };
+        let pid = self.project_for(project)?;
         self.spawn_session(&pid, name, prompt, false)
+    }
+
+    fn queue_ls(&self) -> String {
+        let mut out = String::new();
+        for t in &self.st.tasks {
+            let project = self
+                .st
+                .project(&t.project)
+                .map(|p| p.name.as_str())
+                .unwrap_or("");
+            let state = serde_json::to_value(t.state)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            out.push_str(&format!("{project}\t{state}\t{}\t{}\n", t.title, t.note));
+        }
+        out
     }
 
     fn ls(&self) -> String {
@@ -1736,35 +2002,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
         };
         self.cancel_mode();
         self.activate(&order[i as usize].clone());
-        Ok(())
-    }
-
-    fn jump_waiting(&mut self) -> Result<()> {
-        let alert = |k: NoticeKind| {
-            self.alerts
-                .iter()
-                .filter(|(_, (kk, _))| *kk == k)
-                .max_by_key(|(_, (_, at))| *at)
-                .map(|(sid, _)| sid.clone())
-        };
-        let oldest = self
-            .st
-            .sessions
-            .iter()
-            .filter(|s| s.status == Status::Waiting)
-            .min_by_key(|s| s.since)
-            .map(|s| s.id.clone())
-            .or_else(|| alert(NoticeKind::Error))
-            .or_else(|| alert(NoticeKind::Done));
-        match oldest {
-            Some(sid) => {
-                self.cancel_mode();
-                self.activate(&sid);
-                self.sync_main();
-                self.set_focus(Focus::Main);
-            }
-            None => self.flash("nothing needs you"),
-        }
         Ok(())
     }
 
@@ -1847,15 +2084,25 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
     }
 
-    fn cancel_mode(&mut self) {
-        if matches!(
+    fn in_strip(&self) -> bool {
+        matches!(
             self.mode,
             IMode::NewProject(_)
                 | IMode::Peek { .. }
                 | IMode::Finish { .. }
                 | IMode::Search { .. }
                 | IMode::Broadcast { .. }
-        ) {
+                | IMode::Prompts(_)
+                | IMode::Inbox { .. }
+                | IMode::Queue { .. }
+                | IMode::Compare { .. }
+                | IMode::Plan { .. }
+                | IMode::Ask { .. }
+        )
+    }
+
+    fn cancel_mode(&mut self) {
+        if self.in_strip() {
             self.mode = IMode::Normal;
             self.apply_layout();
         }
@@ -1926,15 +2173,22 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
-    fn drawer_pane(&self) -> Option<String> {
-        if self.stage_kind().is_some() {
-            return None;
+    fn drawer_panes(&self) -> Vec<String> {
+        match &self.active {
+            Some(sid) if self.stage_kind().is_none() && self.drawer.contains(sid) => {
+                self.shells.get(sid).cloned().unwrap_or_default()
+            }
+            _ => Vec::new(),
         }
-        let sid = self.active.as_ref()?;
-        if !self.drawer.contains(sid) {
-            return None;
-        }
-        self.shells.get(sid).cloned()
+    }
+
+    fn current_shell(&self, sid: &str) -> Option<String> {
+        let list = self.shells.get(sid)?;
+        self.shell_focus
+            .as_ref()
+            .filter(|p| list.contains(p))
+            .or(list.first())
+            .cloned()
     }
 
     fn column_rows(&self) -> u16 {
@@ -1951,19 +2205,92 @@ impl<B: SessionBackend + UiBackend> App<B> {
     }
 
     fn ensure_shell(&mut self, sid: &str) -> Result<String> {
-        if let Some(p) = self.shells.get(sid) {
-            return Ok(p.clone());
+        match self.current_shell(sid) {
+            Some(p) => Ok(p),
+            None => self.add_shell(sid),
         }
+    }
+
+    fn add_shell(&mut self, sid: &str) -> Result<String> {
         let s = self
             .st
             .session(sid)
             .ok_or_else(|| anyhow!("no such session"))?;
+        if !s.cwd.is_dir() {
+            bail!("{} doesn't exist any more", tilde(&s.cwd));
+        }
+        let n = self.shells.get(sid).map_or(0, Vec::len) as u16 + 1;
         let w = self.col_w.first().copied().unwrap_or(self.main_width());
+        if n > 1 && w / n < MIN_SHELL_W {
+            bail!("no room for another shell here; type exit in one to close it");
+        }
         let pane = self
             .be
-            .spawn_shell(sid, &s.cwd, (w, self.drawer_height()))?;
-        self.shells.insert(sid.to_string(), pane.clone());
+            .spawn_shell(sid, &s.cwd, (w / n, self.drawer_height()))?;
+        self.shells
+            .entry(sid.to_string())
+            .or_default()
+            .push(pane.clone());
+        self.shell_focus = Some(pane.clone());
         Ok(pane)
+    }
+
+    fn new_shell(&mut self) -> Result<()> {
+        let sid = self
+            .active
+            .clone()
+            .ok_or_else(|| anyhow!("open a session first"))?;
+        if self.shells.get(&sid).is_some_and(|l| !l.is_empty()) {
+            self.add_shell(&sid)?;
+        }
+        self.cancel_mode();
+        self.open_drawer()?;
+        self.set_focus(Focus::Shell);
+        Ok(())
+    }
+
+    fn close_shell(&mut self) -> Result<()> {
+        let sid = self
+            .active
+            .clone()
+            .ok_or_else(|| anyhow!("open a session first"))?;
+        let pane = self
+            .current_shell(&sid)
+            .ok_or_else(|| anyhow!("this session has no shell"))?;
+        let list = self.shells.entry(sid.clone()).or_default();
+        let at = list.iter().position(|p| *p == pane).unwrap_or(0);
+        list.retain(|p| *p != pane);
+        self.shell_focus = list.get(at.min(list.len().saturating_sub(1))).cloned();
+        if list.is_empty() {
+            self.shells.remove(&sid);
+            self.drawer.remove(&sid);
+        }
+        self.shell_run.remove(&pane);
+        self.be.kill(&pane)?;
+        self.apply_layout();
+        self.set_focus(if self.drawer_shown.is_empty() {
+            Focus::Main
+        } else {
+            Focus::Shell
+        });
+        Ok(())
+    }
+
+    fn step_shell(&mut self, delta: i32) {
+        let list = self.drawer_shown.clone();
+        let Some(sid) = self.active.clone() else {
+            return;
+        };
+        let at = self
+            .current_shell(&sid)
+            .and_then(|p| list.iter().position(|x| *x == p))
+            .unwrap_or(0) as i32;
+        let n = list.len() as i32;
+        if n == 0 {
+            return;
+        }
+        self.shell_focus = list.get((at + delta).rem_euclid(n) as usize).cloned();
+        self.set_focus(Focus::Shell);
     }
 
     fn open_drawer(&mut self) -> Result<String> {
@@ -1974,8 +2301,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let pane = self.ensure_shell(&sid)?;
         self.help = false;
         self.drawer.insert(sid.clone());
-        if let Some(r) = self.shell_run.get_mut(&sid) {
-            r.done = None;
+        for p in self.shells.get(&sid).cloned().unwrap_or_default() {
+            if let Some(r) = self.shell_run.get_mut(&p) {
+                r.done = None;
+            }
         }
         self.col = 0;
         self.apply_layout();
@@ -1987,7 +2316,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .active
             .clone()
             .ok_or_else(|| anyhow!("open a session first"))?;
-        let open = self.drawer.contains(&sid) && self.drawer_shown.is_some();
+        let open = self.drawer.contains(&sid) && !self.drawer_shown.is_empty();
         if !open {
             self.cancel_mode();
             self.open_drawer()?;
@@ -2029,9 +2358,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .clone()
             .ok_or_else(|| anyhow!("open a session first"))?;
         let shell = self
-            .shells
-            .get(&sid)
-            .cloned()
+            .current_shell(&sid)
             .ok_or_else(|| anyhow!("this session has no shell yet (ctrl+t)"))?;
         let claude = self
             .st
@@ -2048,12 +2375,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let tail = lines[end.saturating_sub(40)..end].join("\n");
         let cmd = self
             .shell_run
-            .get(&sid)
+            .get(&shell)
             .and_then(|r| r.done.as_ref().map(|d| d.0.clone()))
             .unwrap_or_else(|| "my shell".into());
         let msg = format!("Here's the output of `{cmd}` from my shell:\n```\n{tail}\n```\n");
         self.be.send_text(&claude, &msg, false)?;
-        if let Some(r) = self.shell_run.get_mut(&sid) {
+        if let Some(r) = self.shell_run.get_mut(&shell) {
             r.done = None;
         }
         self.col = 0;
@@ -2071,36 +2398,33 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     fn refresh_shells(&mut self) {
         let Ok(list) = self.be.shells() else { return };
-        let mut seen = HashMap::new();
-        for sp in &list {
-            seen.insert(sp.sid.clone(), sp.pane.clone());
-        }
-        self.shells = seen;
+        self.shells = by_session(&list);
         let shells = self.shells.clone();
         self.drawer.retain(|sid| shells.contains_key(sid));
-        self.shell_run.retain(|sid, _| shells.contains_key(sid));
+        self.shell_run
+            .retain(|pane, _| list.iter().any(|sp| sp.pane == *pane));
         for sp in list {
             let name = sp.command.trim_start_matches('-');
             let idle = SHELLS.contains(&name) || sp.command.is_empty();
-            let was = self.shell_run.get(&sp.sid).and_then(|r| r.running.clone());
+            let was = self.shell_run.get(&sp.pane).and_then(|r| r.running.clone());
             match (idle, was) {
                 (false, None) => {
                     let cmd = self.be.child_command(sp.pid).unwrap_or(sp.command.clone());
-                    let r = self.shell_run.entry(sp.sid.clone()).or_default();
+                    let r = self.shell_run.entry(sp.pane.clone()).or_default();
                     r.running = Some(cmd);
                     r.done = None;
                 }
                 (true, Some(cmd)) => {
                     let tail = self.be.capture(&sp.pane).unwrap_or_default();
                     let (failed, detail) = classify(&tail);
-                    let r = self.shell_run.entry(sp.sid.clone()).or_default();
+                    let r = self.shell_run.entry(sp.pane.clone()).or_default();
                     r.running = None;
                     r.done = Some((cmd, failed, detail));
                 }
                 _ => {}
             }
         }
-        if self.drawer_pane() != self.drawer_shown
+        if self.drawer_panes() != self.drawer_shown
             || crate::ui::bar::height(&self.view()) != self.bar_h
         {
             self.apply_layout();
@@ -2111,13 +2435,21 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let sid = self.active.clone().unwrap_or_default();
         let runnable = self.focus != Focus::Sidebar
             && self.runnable.get(&sid).is_some_and(|(l, _)| !l.is_empty());
-        let drawer = self.drawer_shown.is_some();
-        let shellout = self.shells.contains_key(&sid)
-            && (drawer || self.shell_run.get(&sid).is_some_and(|r| r.done.is_some()));
+        let drawer = !self.drawer_shown.is_empty();
+        let mine = self.shells.get(&sid).cloned().unwrap_or_default();
+        let shellout = !mine.is_empty()
+            && (drawer
+                || mine
+                    .iter()
+                    .any(|p| self.shell_run.get(p).is_some_and(|r| r.done.is_some())));
+        let inshell = drawer && self.focus == Focus::Shell;
+        let arrows = !self.cols.is_empty() || (inshell && self.drawer_shown.len() > 1);
         for (name, on) in [
             ("runnable", runnable),
             ("drawer", drawer),
             ("shellout", shellout),
+            ("inshell", inshell),
+            ("arrows", arrows),
         ] {
             if self.flags.get(name) != Some(&on) && self.be.set_flag(name, on).is_ok() {
                 self.flags.insert(name, on);
@@ -2186,6 +2518,11 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 Ok(())
             }
+            Char('p') if marks.is_empty() => Err(anyhow!("mark sessions with space first")),
+            Char('p') => {
+                self.mode = IMode::Mark { marks };
+                return self.start_prompts();
+            }
             Enter if marks.is_empty() => Err(anyhow!("mark sessions with space first")),
             Enter => {
                 self.mode = IMode::Broadcast {
@@ -2212,23 +2549,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             KeyCode::Char('u') if k.ctrl => text.clear(),
             KeyCode::Enter if !text.trim().is_empty() => {
-                let (mut now_n, mut later) = (0, 0);
-                for sid in &marks {
-                    let Some(s) = self.st.session(sid).cloned() else {
-                        continue;
-                    };
-                    let Some(pane) = s.pane.clone() else { continue };
-                    if s.status == Status::Running {
-                        self.queued
-                            .entry(sid.clone())
-                            .or_default()
-                            .push(text.trim().to_string());
-                        later += 1;
-                    } else {
-                        self.be.send_text(&pane, text.trim(), true)?;
-                        now_n += 1;
-                    }
-                }
+                let (now_n, later) = self.deliver(&marks, text.trim())?;
                 self.cancel_mode();
                 self.set_focus(Focus::Sidebar);
                 self.flash(match later {
@@ -2241,6 +2562,28 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
         self.mode = IMode::Broadcast { marks, text };
         Ok(())
+    }
+
+    fn deliver(&mut self, sids: &[String], text: &str) -> Result<(usize, usize)> {
+        let (mut now_n, mut later) = (0, 0);
+        for sid in sids {
+            let Some(s) = self.st.session(sid).cloned() else {
+                continue;
+            };
+            let Some(pane) = s.pane.clone() else { continue };
+            if s.status == Status::Running {
+                self.queued
+                    .entry(sid.clone())
+                    .or_default()
+                    .push(text.to_string());
+                later += 1;
+            } else {
+                self.be.send_text(&pane, text, true)?;
+                self.sent.insert(sid.clone(), Instant::now());
+                now_n += 1;
+            }
+        }
+        Ok((now_n, later))
     }
 
     fn deliver_queued(&mut self) {
@@ -2415,6 +2758,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             since: now(),
             exit_code: None,
             auto_name: false,
+            reviews: None,
         });
         self.resume(&sid)?;
         self.sync_main();
@@ -2506,6 +2850,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             gh: git::has_gh(),
             confirm_discard: false,
             busy: None,
+            conflicts: Vec::new(),
         };
         self.mode = IMode::Finish {
             sid: sid.into(),
@@ -2560,6 +2905,25 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.flash(format!("asked {} to commit", s.name));
                 return Ok(());
             }
+            KeyCode::Char('c') => {
+                if info.conflicts.is_empty() {
+                    self.mode = IMode::Finish { sid, info };
+                    bail!("no conflicts to resolve; m merges");
+                }
+                let pane = s
+                    .pane
+                    .clone()
+                    .ok_or_else(|| anyhow!("{} isn't running", s.name))?;
+                let prompt = git::conflict_prompt(&info.branch, &info.into, &info.conflicts);
+                self.be.send_text(&pane, &prompt, true)?;
+                self.cancel_mode();
+                self.set_focus(Focus::Sidebar);
+                self.flash(format!(
+                    "asked {} to rebase and resolve the conflicts · f then m when it's done",
+                    s.name
+                ));
+                return Ok(());
+            }
             KeyCode::Char('m') => {
                 if info.dirty > 0 {
                     self.mode = IMode::Finish { sid, info };
@@ -2569,7 +2933,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     self.mode = IMode::Finish { sid, info };
                     bail!("nothing to merge: the branch has no new commits");
                 }
-                git::merge(&repo, &info.branch)?;
+                if let git::Merged::Conflicts(files) = git::merge(&repo, &info.branch)? {
+                    let n = files.len();
+                    info.conflicts = files;
+                    self.mode = IMode::Finish { sid, info };
+                    self.flash(format!(
+                        "merging conflicts in {n} file{} · c asks Claude to resolve them",
+                        if n == 1 { "" } else { "s" }
+                    ));
+                    return Ok(());
+                }
                 self.cancel_mode();
                 self.kill(&CurRef::Session(sid))?;
                 git::remove_worktree(&repo, &wt, &info.branch, false)?;
@@ -2762,7 +3135,30 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
+    fn paste(&mut self, role: Role, text: &str) -> Result<()> {
+        if !matches!(self.mode, IMode::Normal) {
+            let flat = text
+                .chars()
+                .map(|c| if c.is_whitespace() { ' ' } else { c });
+            for c in flat.filter(|c| !c.is_control()) {
+                self.key(role, Key::plain(KeyCode::Char(c)))?;
+            }
+            return Ok(());
+        }
+        let pane = self
+            .active
+            .as_ref()
+            .and(self.focused_pane())
+            .ok_or_else(|| anyhow!("open a chat first, then drop it there"))?;
+        self.be.send_text(&pane, text, false)?;
+        self.set_focus(Focus::Main);
+        Ok(())
+    }
+
     fn click(&mut self, y: u16) -> Result<()> {
+        if self.in_strip() {
+            self.cancel_mode();
+        }
         if !matches!(self.mode, IMode::Normal) {
             return Ok(());
         }
@@ -2813,10 +3209,38 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if let IMode::Broadcast { marks, text } = self.mode.clone() {
             return self.broadcast_key(marks, text, k);
         }
+        if let IMode::Ask { text, back } = self.mode.clone() {
+            return self.ask_key(text, back, k);
+        }
+        if let IMode::Prompts(pk) = self.mode.clone() {
+            return self.prompts_key(pk, k);
+        }
+        if let IMode::Note { pid, text } = self.mode.clone() {
+            return self.note_key(pid, text, k);
+        }
+        if let IMode::Queue {
+            pid, sel, input, ..
+        } = self.mode.clone()
+        {
+            return self.queue_key(pid, sel, input, k);
+        }
+        if let IMode::Plan { sid, tasks, sel } = self.mode.clone() {
+            return self.plan_key(sid, tasks, sel, k);
+        }
+        if let IMode::Compare {
+            task,
+            sel,
+            stats,
+            confirm,
+        } = self.mode.clone()
+        {
+            return self.compare_key(task, sel, stats, confirm, k);
+        }
         if k.ctrl {
             return Ok(());
         }
         match self.mode.clone() {
+            IMode::Ask { .. } => Ok(()),
             IMode::Mark { marks } => self.mark_key(marks, k),
             IMode::DrawerResize => {
                 let step = if k.shift { 5 } else { 1 };
@@ -2837,7 +3261,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
                 Ok(())
             }
-            IMode::Broadcast { .. } => Ok(()),
+            IMode::Broadcast { .. }
+            | IMode::Prompts(_)
+            | IMode::Note { .. }
+            | IMode::Queue { .. }
+            | IMode::Compare { .. }
+            | IMode::Plan { .. } => Ok(()),
+            IMode::Inbox { sel } => self.inbox_key(sel, k),
             IMode::Search {
                 query,
                 all,
@@ -3079,7 +3509,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             return Ok(());
         }
+        if let Char(c) = k.code {
+            self.note_use(&format!("key {c}"));
+        }
         match k.code {
+            Char('J') => self.move_project(1)?,
+            Char('K') => self.move_project(-1)?,
+            Down if k.shift => self.move_project(1)?,
+            Up if k.shift => self.move_project(-1)?,
             Char('j') | Down => self.move_cursor(1),
             Char('k') | Up => self.move_cursor(-1),
             Char('g') | Home => self.move_cursor(-10_000),
@@ -3155,6 +3592,40 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 };
                 self.review(&sid)?;
             }
+            Char('N') => self.start_note()?,
+            Char('R') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to the session whose work should be reviewed"),
+                };
+                self.start_reviewer(&sid)?;
+            }
+            Char('q') => self.start_queue()?,
+            Char('H') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to a session to see its timeline"),
+                };
+                self.open_timeline(&sid)?;
+            }
+            Char('P') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to the session that wrote the plan"),
+                };
+                self.start_plan(&sid)?;
+            }
+            Char('t') | Char('T') => {
+                let sid = match &self.cursor {
+                    Some(CurRef::Session(sid)) => sid.clone(),
+                    _ => bail!("move to a session first"),
+                };
+                if k.code == Char('t') {
+                    self.send_failures(&sid)?;
+                } else {
+                    self.run_checks_now(&sid)?;
+                }
+            }
             Char('p') => {
                 let hidden_waiting = self
                     .st
@@ -3193,6 +3664,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
+    fn move_project(&mut self, by: i32) -> Result<()> {
+        let pid = self
+            .current_project()
+            .ok_or_else(|| anyhow!("move to a project to reorder it"))?;
+        self.st.move_project(&pid, by);
+        Ok(())
+    }
+
     fn open_editor(&mut self) -> Result<()> {
         let dir = match &self.cursor {
             Some(CurRef::Session(sid)) => self.st.session(sid).map(|s| s.cwd.clone()),
@@ -3200,6 +3679,12 @@ impl<B: SessionBackend + UiBackend> App<B> {
             None => None,
         }
         .ok_or_else(|| anyhow!("select a project first"))?;
+        self.launch_editor(&dir)?;
+        self.flash(format!("opened {} in {}", tilde(&dir), self.env.editor));
+        Ok(())
+    }
+
+    fn launch_editor(&self, target: &Path) -> Result<()> {
         let ed = &self.env.editor;
         let mut cmd = if crate::daemon::find_in_path(ed).is_some() {
             std::process::Command::new(ed)
@@ -3209,7 +3694,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             c
         };
         let mut child = cmd
-            .arg(&dir)
+            .arg(target)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -3220,7 +3705,6 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 crate::daemon::log("editor exited with an error");
             }
         });
-        self.flash(format!("opened {} in {ed}", tilde(&dir)));
         Ok(())
     }
 
@@ -3323,6 +3807,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                         }
                         _ => None,
                     },
+                    check: self.check_badge(&s.id),
                 });
             }
             projects.push(ProjectRow {
@@ -3373,6 +3858,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 },
             },
             IMode::Filter { text } => Mode::Filter { text: text.clone() },
+            IMode::Note { pid, text } => Mode::Note {
+                project: self
+                    .st
+                    .project(pid)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default(),
+                text: text.clone(),
+            },
             IMode::Finish { info, .. } => Mode::Finish(info.clone()),
             IMode::Search {
                 query,
@@ -3381,6 +3874,22 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 scope,
             } => Mode::Search(self.search_view(query, *all, *sel, scope)),
             IMode::Mark { marks } => Mode::Mark { count: marks.len() },
+            IMode::Prompts(pk) => Mode::Prompts(self.prompts_view(pk)),
+            IMode::Inbox { sel } => Mode::Inbox(self.inbox_view(*sel)),
+            IMode::Ask { text, .. } => Mode::Ask(self.ask_view(text)),
+            IMode::Queue {
+                pid,
+                sel,
+                input,
+                confirm,
+            } => Mode::Queue(self.queue_view(pid, *sel, input, *confirm)),
+            IMode::Compare {
+                task,
+                sel,
+                stats,
+                confirm,
+            } => Mode::Compare(self.compare_view(task, *sel, stats, *confirm)),
+            IMode::Plan { sid, tasks, sel } => Mode::Plan(self.plan_view(sid, tasks, *sel)),
             IMode::Broadcast { marks, text } => {
                 let targets: Vec<crate::view::Target> = marks
                     .iter()
@@ -3453,7 +3962,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             path,
             stage: self.stage_kind().unwrap_or(Stage::Empty),
             flash: self.flash.as_ref().map(|(m, _)| m.clone()),
+            hints: self.hints(),
             bell: self.bell,
+            osc: self.osc.clone(),
             color: self.color,
             filter: self.filter.clone(),
             mascot: if self.muted {
@@ -3462,6 +3973,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 self.mascot.clone()
             },
             notice: self.notice(&counts),
+            tip: self.tip(&counts),
             columns: self.tabs(),
             col_focus: self.col,
             resizing: self.resize_divider(),
@@ -3486,9 +3998,21 @@ impl<B: SessionBackend + UiBackend> App<B> {
     fn shell_view(&self) -> Option<crate::view::ShellView> {
         let sid = self.active.as_ref()?;
         let s = self.st.session(sid)?;
-        let has = self.shells.contains_key(sid);
-        let run = self.shell_run.get(sid).cloned().unwrap_or_default();
-        let open = self.drawer_shown.is_some();
+        let mine = self.shells.get(sid).cloned().unwrap_or_default();
+        let has = !mine.is_empty();
+        let current = self.current_shell(sid);
+        let run = current
+            .as_ref()
+            .and_then(|p| self.shell_run.get(p))
+            .filter(|r| r.running.is_some() || r.done.is_some())
+            .or_else(|| {
+                mine.iter()
+                    .filter_map(|p| self.shell_run.get(p))
+                    .find(|r| r.running.is_some() || r.done.is_some())
+            })
+            .cloned()
+            .unwrap_or_default();
+        let open = !self.drawer_shown.is_empty();
         if !has && !open {
             return None;
         }
@@ -3507,6 +4031,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
             running: run.running,
             done: run.done,
             resize,
+            count: mine.len(),
+            at: current
+                .and_then(|p| mine.iter().position(|x| *x == p))
+                .map_or(1, |i| i + 1),
         })
     }
 
@@ -3724,6 +4252,7 @@ mod tests {
                 sid: Some(spec.sid.clone()),
                 dead: false,
                 dead_status: None,
+                path: Some(spec.cwd.clone()),
             });
             Ok(id)
         }
@@ -3734,6 +4263,7 @@ mod tests {
         fn kill(&self, pane: &str) -> Result<()> {
             self.log.borrow_mut().push(format!("kill {pane}"));
             self.panes.borrow_mut().retain(|p| p.id != pane);
+            self.shell_panes.borrow_mut().retain(|(p, _)| p != pane);
             Ok(())
         }
         fn list(&self) -> Result<Vec<LivePane>> {
@@ -3753,7 +4283,16 @@ mod tests {
             Ok(())
         }
         fn spawn_shell(&self, sid: &str, _: &std::path::Path, _: (u16, u16)) -> Result<String> {
-            let id = format!("%sh-{sid}");
+            let n = self
+                .shell_panes
+                .borrow()
+                .iter()
+                .filter(|(_, s)| s == sid)
+                .count();
+            let id = match n {
+                0 => format!("%sh-{sid}"),
+                n => format!("%sh-{sid}-{n}"),
+            };
             self.shell_panes
                 .borrow_mut()
                 .push((id.clone(), sid.to_string()));
@@ -3863,6 +4402,21 @@ mod tests {
             settings: "/s.json".into(),
             sock: "/x.sock".into(),
             editor: "true".into(),
+            prompts: std::env::temp_dir().join(format!("pebl-test-prompts-{}", std::process::id())),
+            memory: std::env::temp_dir().join(format!("pebl-test-memory-{}", std::process::id())),
+            reviews: std::env::temp_dir().join(format!("pebl-test-reviews-{}", std::process::id())),
+            detect_checks: true,
+            recipes: std::env::temp_dir().join(format!("pebl-test-recipes-{}", std::process::id())),
+            timeline: std::env::temp_dir()
+                .join(format!("pebl-test-timeline-{}", std::process::id())),
+            clipboard: || Some("BUG-12: login loops after reset\nsteps: …".into()),
+            ask: |_, system, q| {
+                assert!(system.contains("ctrl+t"));
+                Ok(match q {
+                    "two terminals?" => "Open the shell, then click + split. [do:shell]".into(),
+                    _ => "a is waiting on you [go:a]".into(),
+                })
+            },
             notify: crate::config::Notify {
                 phone: "test-topic".into(),
                 phone_after: 0,
@@ -3950,7 +4504,12 @@ mod tests {
         a.st.session_mut(&ids[1]).unwrap().since = 100;
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         assert_eq!(a.view().counts.waiting, 2);
-        assert!(a.view().bell >= 1);
+        a.env.notify.bell = crate::config::Events::Only(vec!["waiting".into()]);
+        a.env.notify.osc = crate::config::Events::All(true);
+        a.tick();
+        let v = a.view();
+        assert!(v.bell >= 1);
+        assert!(v.osc.is_some_and(|(_, t)| t.ends_with("needs you")));
         a.handle_ctl(&["waiting".into()]);
         assert_eq!(a.view().active.unwrap().session, "b");
         a.handle_hook(&ids[1], "PostToolUse", &serde_json::Value::Null);
@@ -4051,6 +4610,7 @@ mod tests {
         let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
         a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         a.tick();
+        assert!(a.outbox.iter().all(|o| !o.away_only));
         let sent: Vec<(Channel, String)> = a
             .outbox
             .drain(..)
@@ -4073,9 +4633,20 @@ mod tests {
         );
         a.tick();
         assert!(a.outbox.is_empty());
-        a.handle_hook(&ids[0], "PostToolUse", &serde_json::Value::Null);
-        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
         a.handle_ctl(&["waiting".into()]);
+        a.handle_hook(&ids[0], "PostToolUse", &serde_json::Value::Null);
+        a.tick();
+        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
+        a.tick();
+        let on_screen: Vec<(Channel, bool)> = a
+            .outbox
+            .drain(..)
+            .map(|o| (o.channel, o.away_only))
+            .collect();
+        assert_eq!(
+            on_screen,
+            vec![(Channel::Chime, true), (Channel::Desktop, true)]
+        );
         a.tick();
         assert!(a.outbox.is_empty(), "{:?}", a.outbox);
     }
@@ -4155,6 +4726,828 @@ mod tests {
         );
     }
 
+    fn ctrl(a: &mut App<Fake>, c: char) {
+        let mut k = Key::plain(KeyCode::Char(c));
+        k.ctrl = true;
+        a.handle_input(Role::Bar, Input::Key(k));
+    }
+
+    fn with_prompts(a: &mut App<Fake>) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        a.env.prompts = dir.path().join("prompts");
+        a.env.recipes = dir.path().join("recipes");
+        dir
+    }
+
+    #[test]
+    fn saved_prompt_fills_the_clipboard_and_sends() {
+        let (mut a, d) = app();
+        let _p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let pane = a.st.sessions[0].pane.clone().unwrap();
+        a.handle_ctl(&["prompts".into()]);
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker not open")
+        };
+        assert_eq!(pv.rows[0].name, "investigate ticket");
+        assert!(
+            matches!(pv.clip, crate::view::Clip::Text { ref first, lines: 2 } if first.starts_with("BUG-12"))
+        );
+        assert_eq!(a.view().focus, Focus::Bar);
+        typ_role(&mut a, Role::Bar, "invest");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("send {pane} \"Investigate this ticket"))
+                && log.contains("BUG-12: login loops after reset\\nsteps: …\" true"),
+            "{log}"
+        );
+        assert!(matches!(a.view().mode, Mode::Normal));
+        assert_eq!(a.view().focus, Focus::Main);
+
+        a.handle_ctl(&["prompts".into()]);
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("send {pane} \"Investigate")) && log.contains("steps: …\" false"),
+            "{log}"
+        );
+    }
+
+    #[test]
+    fn saves_adds_and_deletes_prompts() {
+        let (mut a, d) = app();
+        let p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_ctl(&["prompts".into()]);
+        ctrl(&mut a, 's');
+        assert!(a.view().flash.unwrap().contains("send a prompt"));
+        key(&mut a, Role::Bar, KeyCode::Esc);
+        a.handle_hook(
+            &sid,
+            "UserPromptSubmit",
+            &serde_json::json!({"prompt": "Review this diff for edge cases"}),
+        );
+        a.handle_ctl(&["prompts".into()]);
+        ctrl(&mut a, 's');
+        typ_role(&mut a, Role::Bar, "edge cases");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let saved = std::fs::read_to_string(p.path().join("prompts/edge-cases.md")).unwrap();
+        assert_eq!(saved, "Review this diff for edge cases");
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker closed")
+        };
+        assert_eq!(pv.rows[pv.sel].name, "edge cases");
+        ctrl(&mut a, 'a');
+        typ_role(&mut a, Role::Bar, "write tests");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert!(p.path().join("prompts/write-tests.md").exists());
+        ctrl(&mut a, 'd');
+        key(&mut a, Role::Bar, KeyCode::Char('y'));
+        assert!(!p.path().join("prompts/write-tests.md").exists());
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker closed")
+        };
+        assert_eq!(pv.total, 4);
+    }
+
+    #[test]
+    fn typing_a_new_prompt_and_pressing_enter_saves_it() {
+        let (mut a, d) = app();
+        let p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        a.handle_ctl(&["prompts".into()]);
+        let body = "check the structure of the codebase first, then explain the plan";
+        typ_role(&mut a, Role::Bar, body);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker closed")
+        };
+        assert_eq!(
+            pv.step,
+            crate::view::PromptStep::Name {
+                text: "check the structure of".into(),
+                from: crate::view::NameFrom::Typed
+            }
+        );
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let saved =
+            std::fs::read_to_string(p.path().join("prompts/check-the-structure-of.md")).unwrap();
+        assert_eq!(saved, body);
+        assert!(!a.be.log.borrow().iter().any(|l| l.starts_with("send ")));
+    }
+
+    fn wait_for_badge(a: &mut App<Fake>, want: crate::view::CheckBadge) {
+        let started = Instant::now();
+        loop {
+            a.tick();
+            let badge = a.view().projects[0].sessions[0].check;
+            if badge == Some(want) {
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "badge stuck at {badge:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn checks_run_after_a_turn_and_failures_go_back_to_claude() {
+        use crate::view::CheckBadge;
+        let (mut a, d) = app();
+        std::fs::write(
+            d.path().join("pebl.toml"),
+            "[checks]\ntest = \"echo 2 tests failing; exit 1\"\nauto_fix = 1\n",
+        )
+        .unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        let pane = a.st.sessions[0].pane.clone().unwrap();
+        let sends = |a: &App<Fake>| {
+            a.be.log
+                .borrow()
+                .iter()
+                .filter(|l| l.starts_with(&format!("send {pane} \"The project's checks failed")))
+                .count()
+        };
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        wait_for_badge(&mut a, CheckBadge::Failed);
+        assert_eq!(sends(&a), 1);
+        assert!(a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.contains("2 tests failing")));
+
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        assert_eq!(
+            a.view().projects[0].sessions[0].check,
+            Some(CheckBadge::Running)
+        );
+        wait_for_badge(&mut a, CheckBadge::Failed);
+        assert_eq!(sends(&a), 1);
+        assert!(a.view().flash.unwrap().contains("t sends it"));
+
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('t'));
+        assert_eq!(sends(&a), 2);
+
+        std::fs::write(d.path().join("pebl.toml"), "[checks]\ntest = \"true\"\n").unwrap();
+        wait_for_badge(&mut a, CheckBadge::Failed);
+        key(&mut a, Role::Sidebar, KeyCode::Char('T'));
+        wait_for_badge(&mut a, CheckBadge::Passed);
+        key(&mut a, Role::Sidebar, KeyCode::Char('t'));
+        assert!(a.view().flash.unwrap().contains("no failing checks"));
+    }
+
+    #[test]
+    fn project_notes_are_added_and_given_to_new_sessions() {
+        let (mut a, d) = app();
+        let store = tempfile::tempdir().unwrap();
+        a.env.memory = store.path().to_path_buf();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        assert!(!a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.contains("--append-system-prompt-file")));
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('N'));
+        assert!(matches!(a.view().mode, Mode::Note { ref text, .. } if text.is_empty()));
+        typ(&mut a, "we use pnpm, never npm");
+        key(&mut a, Role::Sidebar, KeyCode::Enter);
+        assert!(a.view().flash.unwrap().starts_with("noted for"));
+        let file = a.memory_file(&a.st.projects[0].id.clone()).unwrap();
+        assert!(file.starts_with(store.path()));
+        assert!(std::fs::read_to_string(&file)
+            .unwrap()
+            .ends_with("- we use pnpm, never npm\n"));
+        a.handle_ctl(&["new".into(), String::new(), "b".into(), String::new()]);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!(
+                "claude --settings /s.json --append-system-prompt-file {} --session-id",
+                file.display()
+            )),
+            "{log}"
+        );
+    }
+
+    fn git_repo(dir: &std::path::Path) {
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "start",
+        ]);
+    }
+
+    fn task_states(a: &App<Fake>) -> Vec<crate::model::TaskState> {
+        a.st.tasks.iter().map(|t| t.state).collect()
+    }
+
+    #[test]
+    fn queue_runs_tasks_in_worktrees_a_slot_at_a_time() {
+        use crate::model::TaskState::*;
+        let (mut a, d) = app();
+        git_repo(d.path());
+        std::fs::write(d.path().join("pebl.toml"), "[queue]\nmax_parallel = 1\n").unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        let out = a.handle_ctl(&[
+            "queue-add".into(),
+            d.path().display().to_string(),
+            "1".into(),
+            "Fix the rota export".into(),
+        ]);
+        assert_eq!(out, "queued “Fix the rota export”");
+        a.handle_ctl(&[
+            "queue-add".into(),
+            d.path().display().to_string(),
+            "1".into(),
+            "Add CSV download".into(),
+        ]);
+        assert_eq!(task_states(&a), vec![Running, Pending]);
+        let first = a.st.tasks[0].sessions[0].clone();
+        let s = a.st.session(&first).unwrap().clone();
+        assert!(s.worktree.as_ref().is_some_and(|w| w.exists()));
+        assert_eq!(s.name, "fix-the-rota-export-t2");
+        assert_ne!(a.active.as_deref(), Some(first.as_str()));
+        a.handle_hook(&first, "Stop", &serde_json::Value::Null);
+        a.tick();
+        assert_eq!(task_states(&a), vec![Review, Running]);
+        assert_eq!(a.st.tasks[0].note, "ready for review");
+        let second = a.st.tasks[1].sessions[0].clone();
+        a.handle_ctl(&["queue".into()]);
+        let Mode::Queue(qv) = a.view().mode else {
+            panic!("queue not open")
+        };
+        assert_eq!(qv.rows.len(), 2);
+        assert_eq!(qv.limit, 1);
+        key(&mut a, Role::Bar, KeyCode::Char('D'));
+        assert_eq!(task_states(&a), vec![Done, Running]);
+        a.st.session_mut(&second).unwrap().status = Status::Error;
+        a.tick();
+        assert_eq!(task_states(&a), vec![Done, Failed]);
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('r'));
+        assert_eq!(task_states(&a), vec![Done, Running]);
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        assert!(matches!(a.view().mode, Mode::Queue(ref q) if q.confirm));
+        let wt =
+            a.st.session(&a.st.tasks[1].sessions[0])
+                .unwrap()
+                .worktree
+                .clone()
+                .unwrap();
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        assert_eq!(task_states(&a), vec![Done]);
+        assert!(!wt.exists());
+        let log = a.handle_ctl(&["queue-ls".into()]);
+        assert!(log.contains("\tdone\tFix the rota export\t"), "{log}");
+    }
+
+    #[test]
+    fn a_plan_becomes_queued_tasks() {
+        let (mut a, d) = app();
+        git_repo(d.path());
+        std::fs::write(d.path().join("pebl.toml"), "[queue]\nmax_parallel = 1\n").unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "planner".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('P'));
+        assert!(a.view().flash.unwrap().contains("no \"- [ ]\" checklist"));
+        let reply = "Here's the plan:\n\n- [ ] Add a CSV export endpoint\n  in api/reports.ts\n- [ ] Add the download button\n- [ ] Write the e2e test\n";
+        a.tokens.insert(
+            sid.clone(),
+            (
+                d.path().join("none.jsonl"),
+                0,
+                history::Tokens {
+                    last_text: reply.into(),
+                    ..Default::default()
+                },
+            ),
+        );
+        key(&mut a, Role::Sidebar, KeyCode::Char('P'));
+        let Mode::Plan(pv) = a.view().mode else {
+            panic!("plan not open")
+        };
+        assert_eq!((pv.picked, pv.total), (3, 3));
+        assert_eq!(pv.rows[0].0, "Add a CSV export endpoint");
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char(' '));
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let prompts: Vec<&str> = a.st.tasks.iter().map(|t| t.prompt.as_str()).collect();
+        assert_eq!(
+            prompts,
+            vec![
+                "Add a CSV export endpoint\nin api/reports.ts",
+                "Write the e2e test"
+            ]
+        );
+        assert!(matches!(a.view().mode, Mode::Queue(_)));
+        assert_eq!(a.st.tasks[0].state, crate::model::TaskState::Running);
+    }
+
+    #[test]
+    fn reviewer_reads_the_authors_folder_and_its_findings_are_saved() {
+        let (mut a, d) = app();
+        git_repo(d.path());
+        let reviews = tempfile::tempdir().unwrap();
+        a.env.reviews = reviews.path().to_path_buf();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "auth".into(), String::new()]);
+        let author = a.st.sessions[0].id.clone();
+        a.handle_hook(
+            &author,
+            "UserPromptSubmit",
+            &serde_json::json!({"prompt": "Move sessions to the new store"}),
+        );
+        a.handle_hook(&author, "Stop", &serde_json::Value::Null);
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(author.clone()));
+        key(&mut a, Role::Sidebar, KeyCode::Char('R'));
+        let r =
+            a.st.sessions
+                .iter()
+                .find(|s| s.name == "review-auth")
+                .unwrap()
+                .clone();
+        assert_eq!(r.cwd, a.st.sessions[0].cwd);
+        assert!(r.worktree.is_none());
+        let log = a.be.log.borrow().join("\n");
+        assert!(log.contains("Move sessions to the new store"), "{log}");
+        assert!(
+            log.contains("Don't change, create or delete any files"),
+            "{log}"
+        );
+        a.cursor = Some(CurRef::Session(author.clone()));
+        key(&mut a, Role::Sidebar, KeyCode::Char('R'));
+        assert!(a.view().flash.unwrap().contains("already looking"));
+
+        a.tokens.insert(
+            r.id.clone(),
+            (
+                d.path().join("none.jsonl"),
+                0,
+                history::Tokens {
+                    last_text: "Two issues.\n```review\nsrc/a.ts:3: guard the empty list\nsrc/b.ts:9: log the 401\n```".into(),
+                    ..Default::default()
+                },
+            ),
+        );
+        a.tick();
+        assert!(!reviews.path().join(format!("{author}.json")).exists());
+        a.handle_hook(&r.id, "Stop", &serde_json::Value::Null);
+        a.tick();
+        let saved = std::fs::read_to_string(reviews.path().join(format!("{author}.json"))).unwrap();
+        assert!(saved.contains("guard the empty list") && saved.contains("\"line\":9"));
+        assert!(a.view().flash.unwrap().contains("2 comments"));
+        assert!(a.reviewers.is_empty());
+        std::fs::write(d.path().join("Makefile"), "test:\n\tfalse\n").unwrap();
+        a.handle_hook(&r.id, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&r.id, "Stop", &serde_json::Value::Null);
+        assert_eq!(a.check_badge(&r.id), None);
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(r.id.clone()));
+        let hints: Vec<String> = a.view().hints.into_iter().map(|(k, _)| k).collect();
+        assert!(!hints.contains(&"t".to_string()) && !hints.contains(&"R".to_string()));
+    }
+
+    fn settle(a: &mut App<Fake>, sid: &str) {
+        let started = Instant::now();
+        loop {
+            a.tick();
+            if a.check_progress(sid) != auto_checks::Progress::Busy {
+                a.tick();
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "checks never settled"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn turn(a: &mut App<Fake>, sid: &str) {
+        a.handle_hook(sid, "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(sid, "Stop", &serde_json::Value::Null);
+        settle(a, sid);
+    }
+
+    #[test]
+    fn a_recipe_walks_its_steps_fixing_checks_and_feeding_back_the_review() {
+        use crate::model::TaskState;
+        let (mut a, d) = app();
+        std::fs::write(d.path().join("Makefile"), "test:\n\ttest -f DONE\n").unwrap();
+        git_repo(d.path());
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+                .args(args)
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+        };
+        git(&["add", "."]);
+        git(&["commit", "-qm", "make"]);
+        let store = tempfile::tempdir().unwrap();
+        a.env.recipes = store.path().join("recipes");
+        a.env.reviews = store.path().join("reviews");
+        std::fs::create_dir_all(&a.env.recipes).unwrap();
+        std::fs::write(
+            a.env.recipes.join("fix.toml"),
+            "name = \"fix it\"\nsteps = [\"plan {{ ticket }}\", \"implement it\", \"checks\", \"review\", \"commit it\"]\n",
+        )
+        .unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        let out = a.handle_ctl(&[
+            "recipe-run".into(),
+            String::new(),
+            "fix it".into(),
+            "ticket=BUG-7".into(),
+        ]);
+        assert_eq!(out, "started “fix it” in a new worktree");
+        let sid = a.st.tasks[0].sessions[0].clone();
+        let pane = a.st.session(&sid).unwrap().pane.clone().unwrap();
+        let wt = a.st.session(&sid).unwrap().cwd.clone();
+        let sent = |a: &App<Fake>, text: &str| {
+            a.be.log
+                .borrow()
+                .iter()
+                .any(|l| l.starts_with(&format!("send {pane} \"{text}")))
+        };
+        assert!(a.be.log.borrow().iter().any(|l| l.contains("plan BUG-7")));
+        assert_eq!(a.st.tasks[0].title, "fix it: plan BUG-7");
+
+        turn(&mut a, &sid);
+        assert!(sent(&a, "implement it"));
+        a.handle_ctl(&["queue".into()]);
+        let Mode::Queue(q) = a.view().mode else {
+            panic!("queue not open")
+        };
+        assert_eq!(q.rows[0].detail, "step 2 of 5: implement it");
+        key(&mut a, Role::Bar, KeyCode::Esc);
+
+        turn(&mut a, &sid);
+        a.tick();
+        assert!(sent(&a, "The project's checks failed"));
+        assert_eq!(a.st.tasks[0].at, 2);
+        std::fs::write(wt.join("DONE"), "").unwrap();
+        turn(&mut a, &sid);
+        a.tick();
+        assert_eq!(a.st.tasks[0].at, 3);
+        let r = a.st.tasks[0].reviewer.clone().expect("reviewer started");
+        a.tokens.insert(
+            r.clone(),
+            (
+                d.path().join("none.jsonl"),
+                0,
+                history::Tokens {
+                    last_text: "```review\nsrc/x.ts:4: handle the empty case\n```".into(),
+                    ..Default::default()
+                },
+            ),
+        );
+        a.handle_hook(&r, "Stop", &serde_json::Value::Null);
+        a.tick();
+        a.tick();
+        assert!(sent(&a, "A reviewer looked at your changes"));
+        turn(&mut a, &sid);
+        a.tick();
+        assert!(sent(&a, "commit it"));
+        turn(&mut a, &sid);
+        a.tick();
+        assert_eq!(a.st.tasks[0].state, TaskState::Review);
+        assert_eq!(a.st.tasks[0].note, "recipe done · test passed");
+    }
+
+    #[test]
+    fn turns_are_recorded_snapshotted_and_restorable() {
+        use crate::timeline::Event;
+        let (mut a, d) = app();
+        git_repo(d.path());
+        let store = tempfile::tempdir().unwrap();
+        a.env.timeline = store.path().to_path_buf();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_hook(
+            &sid,
+            "UserPromptSubmit",
+            &serde_json::json!({"prompt": "add a readme"}),
+        );
+        a.handle_hook(
+            &sid,
+            "PreToolUse",
+            &serde_json::json!({"tool_name": "Write", "tool_input": {"file_path": "README.md"}}),
+        );
+        std::fs::write(d.path().join("README.md"), "hello\n").unwrap();
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        let started = Instant::now();
+        let first = loop {
+            a.tick();
+            let turn = crate::timeline::read(store.path(), &sid)
+                .into_iter()
+                .find_map(|e| match e {
+                    Event::Turn {
+                        checkpoint, files, ..
+                    } => Some((checkpoint, files)),
+                    _ => None,
+                });
+            if let Some(t) = turn {
+                break t;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "no turn recorded"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(first.1, vec!["README.md"]);
+        let events = crate::timeline::read(store.path(), &sid);
+        assert!(matches!(&events[0], Event::Prompt { text, .. } if text == "add a readme"));
+        assert!(
+            matches!(&events[1], Event::Tool { name, detail, .. } if name == "Write" && detail == "README.md")
+        );
+
+        std::fs::write(d.path().join("README.md"), "changed\n").unwrap();
+        std::fs::write(d.path().join("extra.txt"), "x").unwrap();
+        let out = a.handle_ctl(&["restore".into(), sid.clone(), first.0.unwrap()]);
+        assert!(out.starts_with("restored"), "{out}");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("README.md")).unwrap(),
+            "hello\n"
+        );
+        assert!(!d.path().join("extra.txt").exists());
+        assert!(matches!(
+            crate::timeline::read(store.path(), &sid).last(),
+            Some(Event::Restore { .. })
+        ));
+
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(sid.clone()));
+        key(&mut a, Role::Sidebar, KeyCode::Char('H'));
+        assert!(a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.starts_with("popup") && l.contains("timeline --sid")));
+        a.handle_hook(&sid, "UserPromptSubmit", &serde_json::Value::Null);
+        let busy = a.handle_ctl(&["restore".into(), sid.clone(), "HEAD".into()]);
+        assert!(busy.contains("is busy"), "{busy}");
+    }
+
+    #[test]
+    fn best_of_n_compares_attempts_and_keeps_the_winner() {
+        use crate::model::TaskState::*;
+        let (mut a, d) = app();
+        git_repo(d.path());
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        let pid = a.st.projects[0].id.clone();
+        a.handle_ctl(&["queue".into()]);
+        key(&mut a, Role::Bar, KeyCode::Char('a'));
+        typ_role(&mut a, Role::Bar, "Speed up the dashboard");
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.st.tasks[0].project, pid);
+        assert_eq!(a.st.tasks[0].attempts, 3);
+        let sids = a.st.tasks[0].sessions.clone();
+        assert_eq!(sids.len(), 3);
+        for sid in &sids {
+            a.handle_hook(sid, "Stop", &serde_json::Value::Null);
+        }
+        a.tick();
+        assert_eq!(task_states(&a), vec![Review]);
+        assert_eq!(a.st.tasks[0].note, "3 of 3 attempts ready to compare");
+        let wt = a.st.session(&sids[2]).unwrap().worktree.clone().unwrap();
+        std::fs::write(wt.join("fast.js"), "a\nb\n").unwrap();
+        a.handle_ctl(&["queue".into()]);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let Mode::Compare(cv) = a.view().mode else {
+            panic!("compare not open")
+        };
+        assert_eq!(cv.rows.len(), 3);
+        assert_eq!((cv.rows[2].files, cv.rows[2].adds), (1, 2));
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('w'));
+        assert!(matches!(a.view().mode, Mode::Compare(ref c) if c.confirm));
+        let losers: Vec<_> = sids[..2]
+            .iter()
+            .map(|s| a.st.session(s).unwrap().worktree.clone().unwrap())
+            .collect();
+        key(&mut a, Role::Bar, KeyCode::Char('w'));
+        assert_eq!(a.st.tasks[0].sessions, vec![sids[2].clone()]);
+        assert!(a.st.session(&sids[0]).is_none() && a.st.session(&sids[1]).is_none());
+        assert!(losers.iter().all(|w| !w.exists()));
+        assert!(wt.exists());
+        assert_eq!(a.active.as_deref(), Some(sids[2].as_str()));
+    }
+
+    #[test]
+    fn detected_checks_run_without_any_config_unless_turned_off() {
+        use crate::view::CheckBadge;
+        let (mut a, d) = app();
+        std::fs::write(d.path().join("Makefile"), "test:\n\ttrue\n").unwrap();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        wait_for_badge(&mut a, CheckBadge::Passed);
+
+        a.env.detect_checks = false;
+        a.checks.clear();
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        a.tick();
+        assert_eq!(a.view().projects[0].sessions[0].check, None);
+        a.set_focus(Focus::Sidebar);
+        key(&mut a, Role::Sidebar, KeyCode::Char('T'));
+        assert!(a.view().flash.unwrap().contains("no checks found"));
+    }
+
+    #[test]
+    fn jel_tips_and_answers_with_an_action() {
+        let (mut a, d) = app();
+        a.mascot = Some("jel".into());
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        assert!(a.view().tip.is_some());
+        let sid = a.st.sessions[0].id.clone();
+        for (hook, kind) in [
+            ("UserPromptSubmit", NoticeKind::Working),
+            ("PermissionRequest", NoticeKind::Waiting),
+            ("PostToolUse", NoticeKind::Working),
+        ] {
+            a.handle_hook(&sid, hook, &serde_json::Value::Null);
+            let v = a.view();
+            assert_eq!((v.notice.kind, v.tip.is_some()), (kind, false), "{hook}");
+        }
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        a.tick();
+        let v = a.view();
+        assert_eq!(v.tip.is_some(), v.notice.kind == NoticeKind::Idle);
+        a.handle_ctl(&["inbox".into()]);
+        a.handle_ctl(&["inbox".into()]);
+        assert!(a.st.used.contains("inbox"));
+        assert!(!a.st.used.contains("next"));
+
+        a.handle_ctl(&["pet".into()]);
+        assert!(matches!(a.view().mode, Mode::Ask(_)));
+        typ_role(&mut a, Role::Bar, "two terminals?");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let answered = |a: &mut App<Fake>| {
+            for _ in 0..200 {
+                a.collect_answers();
+                if let Mode::Ask(av) = a.view().mode {
+                    if av.rows.last().is_some_and(|r| r.answer.is_some()) {
+                        return av;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("no answer")
+        };
+        let av = answered(&mut a);
+        assert_eq!(
+            av.rows[0].answer.as_deref(),
+            Some("Open the shell, then click + split.")
+        );
+        assert_eq!(av.rows[0].act.as_deref(), Some("opens a shell"));
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.view().mode, Mode::Normal);
+        assert!(!a.drawer_shown.is_empty());
+
+        a.handle_ctl(&["ask".into()]);
+        key(&mut a, Role::Bar, KeyCode::Up);
+        let Mode::Ask(av) = a.view().mode else {
+            panic!()
+        };
+        assert_eq!(av.text, "two terminals?");
+        key(&mut a, Role::Bar, KeyCode::Down);
+        typ_role(&mut a, Role::Bar, "where?");
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        answered(&mut a);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.view().active.unwrap().session, "a");
+        assert_eq!(a.view().focus, Focus::Main);
+
+        a.handle_ctl(&["ask".into()]);
+        a.handle_input(Role::Sidebar, Input::Click { x: 3, y: 2 });
+        assert_eq!(a.view().mode, Mode::Normal);
+    }
+
+    #[test]
+    fn dropped_files_go_to_claude_not_the_sidebar() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        a.set_focus(Focus::Sidebar);
+        let drop = "/Users/me/Desktop/shot.png";
+        a.handle_input(Role::Sidebar, Input::Paste(drop.into()));
+        assert_eq!(a.view().mode, Mode::Normal);
+        assert_eq!(a.view().focus, Focus::Main);
+        let pane = a.st.sessions[0].pane.clone().unwrap();
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("send {pane} {drop:?} false")),
+            "{log}"
+        );
+
+        a.handle_ctl(&["ask".into()]);
+        a.handle_input(Role::Bar, Input::Paste("what is\nthis".into()));
+        let Mode::Ask(av) = a.view().mode else {
+            panic!()
+        };
+        assert_eq!(av.text, "what is this");
+    }
+
+    #[test]
+    fn hints_follow_what_is_selected() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        let keys_of = |a: &App<Fake>| -> Vec<String> {
+            a.view().hints.iter().map(|(k, _)| k.clone()).collect()
+        };
+        a.set_focus(Focus::Sidebar);
+        a.cursor = Some(CurRef::Session(ids[0].clone()));
+        assert_eq!(keys_of(&a), vec!["d", "R", "H", "c", "alt+a", "?"]);
+        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
+        assert_eq!(a.view().hints[0], ("enter".into(), "answer it".into()));
+        assert_eq!(keys_of(&a).len(), 7);
+        assert_eq!(a.view().hints[1].0, "p");
+        assert_eq!(keys_of(&a).last().unwrap(), "?");
+        a.cursor = Some(CurRef::Project(a.st.projects[0].id.clone()));
+        assert_eq!(keys_of(&a), vec!["ctrl+n", "q", "N", "space", "alt+a", "?"]);
+        a.set_focus(Focus::Main);
+        assert_eq!(a.view().hints[0], ("ctrl+p".into(), "prompts".into()));
+        assert!(!keys_of(&a).contains(&"?".to_string()));
+        assert_eq!(keys_of(&a).last().unwrap(), "alt+a");
+    }
+
+    #[test]
+    fn saved_prompt_goes_to_every_marked_session() {
+        let (mut a, d) = app();
+        let _p = with_prompts(&mut a);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        a.handle_ctl(&["mark".into()]);
+        key(&mut a, Role::Sidebar, KeyCode::Char('a'));
+        key(&mut a, Role::Sidebar, KeyCode::Char('p'));
+        let Mode::Prompts(pv) = a.view().mode else {
+            panic!("picker not open")
+        };
+        assert_eq!(pv.target, "2 sessions");
+        key(&mut a, Role::Bar, KeyCode::Tab);
+        assert!(a.view().flash.unwrap().contains("one session"));
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        let sends =
+            a.be.log
+                .borrow()
+                .iter()
+                .filter(|l| l.starts_with("send "))
+                .count();
+        assert_eq!(sends, 2);
+        assert_eq!(a.view().focus, Focus::Sidebar);
+    }
+
     #[test]
     fn follows_claude_when_it_switches_conversation() {
         let (mut a, d) = app();
@@ -4180,14 +5573,14 @@ mod tests {
         let sid = a.st.sessions[0].id.clone();
         a.handle_ctl(&["shell".into()]);
         let shell = format!("%sh-{sid}");
-        assert_eq!(a.drawer_shown.as_deref(), Some(shell.as_str()));
+        assert_eq!(a.drawer_shown, vec![shell.clone()]);
         assert_eq!(a.view().focus, Focus::Shell);
         assert!(a.be.log.borrow().iter().any(|l| l.contains("arrange")));
         a.handle_ctl(&["shell".into()]);
         assert_eq!(a.view().focus, Focus::Main);
-        assert!(a.drawer_shown.is_some());
+        assert!(!a.drawer_shown.is_empty());
         a.handle_ctl(&["shell".into()]);
-        assert!(a.drawer_shown.is_none());
+        assert!(a.drawer_shown.is_empty());
 
         a.runnable.insert(
             sid.clone(),
@@ -4198,7 +5591,7 @@ mod tests {
         );
         assert_eq!(a.view().runnable, Some((1, 2)));
         a.handle_ctl(&["run-next".into()]);
-        assert_eq!(a.drawer_shown.as_deref(), Some(shell.as_str()));
+        assert_eq!(a.drawer_shown, vec![shell.clone()]);
         let log = a.be.log.borrow().join("\n");
         assert!(
             log.contains(&format!(
@@ -4219,6 +5612,50 @@ mod tests {
         assert_eq!(a.view().shell.unwrap().resize.unwrap().1, before + 5);
         key(&mut a, Role::Bar, KeyCode::Enter);
         assert_eq!(a.view().focus, Focus::Shell);
+    }
+
+    #[test]
+    fn several_shells_sit_side_by_side_in_the_drawer() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let sid = a.st.sessions[0].id.clone();
+        a.handle_ctl(&["shell-new".into()]);
+        let first = format!("%sh-{sid}");
+        assert_eq!(a.drawer_shown, vec![first.clone()]);
+        a.handle_ctl(&["shell-new".into()]);
+        let second = format!("%sh-{sid}-1");
+        assert_eq!(a.drawer_shown, vec![first.clone(), second.clone()]);
+        assert_eq!(a.view().focus, Focus::Shell);
+        let sv = a.view().shell.unwrap();
+        assert_eq!((sv.at, sv.count), (2, 2));
+        assert_eq!(a.flags.get("arrows"), Some(&true));
+
+        a.handle_ctl(&["resize".into(), "right".into()]);
+        assert_eq!(a.current_shell(&sid), Some(first.clone()));
+        a.handle_ctl(&["shell-to-claude".into()]);
+        a.set_focus(Focus::Shell);
+        a.handle_ctl(&["resize".into(), "left".into()]);
+        assert_eq!(a.current_shell(&sid), Some(second.clone()));
+        a.handle_ctl(&["run-next".into()]);
+
+        a.be.shell_panes.borrow_mut().retain(|(p, _)| *p != second);
+        a.tick();
+        assert_eq!(a.drawer_shown, vec![first.clone()]);
+        assert_eq!(a.current_shell(&sid), Some(first));
+
+        a.win = (60, 30);
+        a.col_w.clear();
+        a.handle_ctl(&["shell-new".into()]);
+        let out = a.handle_ctl(&["shell-new".into()]);
+        assert!(out.contains("no room"), "{out}");
+
+        a.handle_ctl(&["shell-close".into()]);
+        assert_eq!(a.drawer_shown.len(), 1);
+        assert_eq!(a.view().focus, Focus::Shell);
+        a.handle_ctl(&["shell-new".into()]);
+        a.kill(&CurRef::Session(sid.clone())).unwrap();
+        assert!(a.shells.is_empty());
     }
 
     #[test]
@@ -4266,12 +5703,87 @@ mod tests {
             (NoticeKind::Waiting, "wants to run Bash")
         );
         a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "a");
         a.handle_hook(&ids[1], "PostToolUse", &serde_json::Value::Null);
         a.handle_hook(&ids[1], "Stop", &serde_json::Value::Null);
-        assert_eq!(a.view().notice.kind, NoticeKind::Done);
+        a.tick();
+        let n = a.view().notice;
+        assert_eq!((n.kind, n.session.as_str()), (NoticeKind::Done, "b"));
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        assert_eq!(a.view().notice.kind, NoticeKind::Idle);
+    }
+
+    #[test]
+    fn ctrl_g_cycles_through_what_needs_you_then_says_all_clear() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b", "c"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        a.handle_hook(&ids[1], "PermissionRequest", &serde_json::Value::Null);
+        a.st.session_mut(&ids[1]).unwrap().since = 100;
+        a.handle_hook(&ids[0], "PermissionRequest", &serde_json::Value::Null);
+        a.st.session_mut(&ids[0]).unwrap().since = 200;
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
         a.handle_ctl(&["waiting".into()]);
         assert_eq!(a.view().active.unwrap().session, "a");
-        assert_eq!(a.view().notice.kind, NoticeKind::Idle);
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        for id in &ids[..2] {
+            a.handle_hook(id, "UserPromptSubmit", &serde_json::Value::Null);
+        }
+        a.handle_ctl(&["waiting".into()]);
+        assert_eq!(a.view().flash.as_deref(), Some("all clear"));
+    }
+
+    #[test]
+    fn inbox_lists_opens_peeks_and_dismisses() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b", "c"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        a.tick();
+        let bash = serde_json::json!({"tool_name": "Bash"});
+        a.handle_hook(&ids[0], "PermissionRequest", &bash);
+        a.handle_hook(&ids[1], "UserPromptSubmit", &serde_json::Value::Null);
+        a.handle_hook(&ids[1], "Stop", &serde_json::Value::Null);
+        a.tick();
+        a.handle_ctl(&["inbox".into()]);
+        let Mode::Inbox(iv) = a.view().mode else {
+            panic!("inbox not open")
+        };
+        let rows: Vec<(NoticeKind, &str, &str)> = iv
+            .rows
+            .iter()
+            .map(|r| (r.kind, r.session.as_str(), r.detail.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (NoticeKind::Waiting, "a", "wants to run Bash"),
+                (NoticeKind::Done, "b", "finished"),
+            ]
+        );
+        assert_eq!((iv.waiting, iv.total), (1, 2));
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        assert!(a.view().flash.unwrap().contains("answer it"));
+        key(&mut a, Role::Bar, KeyCode::Char('j'));
+        key(&mut a, Role::Bar, KeyCode::Char('x'));
+        let Mode::Inbox(iv) = a.view().mode else {
+            panic!("inbox closed")
+        };
+        assert_eq!(iv.total, 1);
+        key(&mut a, Role::Bar, KeyCode::Char('p'));
+        assert!(matches!(a.view().mode, Mode::Peek(ref pk) if pk.session == "a"));
+        a.handle_ctl(&["inbox".into()]);
+        key(&mut a, Role::Bar, KeyCode::Enter);
+        assert_eq!(a.view().active.unwrap().session, "a");
+        assert_eq!(a.view().focus, Focus::Main);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use crate::backend::LivePane;
 use crate::model::{now, State, Status};
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn load(path: &Path) -> Result<State> {
     match std::fs::read_to_string(path) {
@@ -65,6 +65,43 @@ pub fn reconcile(state: &mut State, live: &[LivePane]) -> bool {
     changed
 }
 
+pub fn follow_moves(
+    state: &mut State,
+    live: &[LivePane],
+    exists: impl Fn(&Path) -> bool,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for s in &state.sessions {
+        let Some(now_at) = live
+            .iter()
+            .find(|p| p.sid.as_deref() == Some(s.id.as_str()) && !p.dead)
+            .and_then(|p| p.path.clone())
+        else {
+            continue;
+        };
+        if now_at != s.cwd
+            && !exists(&s.cwd)
+            && exists(&now_at)
+            && !moves.iter().any(|(from, _)| *from == s.cwd)
+        {
+            moves.push((s.cwd.clone(), now_at));
+        }
+    }
+    let base = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_string());
+    for (from, to) in &moves {
+        for s in state.sessions.iter_mut().filter(|s| s.cwd == *from) {
+            s.cwd = to.clone();
+        }
+        for p in state.projects.iter_mut().filter(|p| p.path == *from) {
+            if base(from).as_deref() == Some(p.name.as_str()) {
+                p.name = base(to).unwrap_or_else(|| p.name.clone());
+            }
+            p.path = to.clone();
+        }
+    }
+    moves
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +120,7 @@ mod tests {
             since: 0,
             exit_code: None,
             auto_name: false,
+            reviews: None,
         }
     }
 
@@ -108,6 +146,7 @@ mod tests {
             sid: Some("s1".into()),
             dead: true,
             dead_status: Some(1),
+            path: None,
         }];
         reconcile(&mut st, &live);
         assert_eq!(st.sessions[0].status, Status::Error);
@@ -125,9 +164,50 @@ mod tests {
             sid: Some("s1".into()),
             dead: false,
             dead_status: None,
+            path: None,
         }];
         reconcile(&mut st, &live);
         assert_eq!(st.sessions[0].pane.as_deref(), Some("%9"));
+    }
+
+    #[test]
+    fn follows_a_renamed_project_folder() {
+        let at = |id: &str, cwd: &str| Session {
+            cwd: cwd.into(),
+            ..sess(id, Some(&format!("%{id}")), Status::Idle)
+        };
+        let mut st = State {
+            projects: vec![crate::model::Project {
+                id: "p1".into(),
+                name: "scroll".into(),
+                path: "/code/scroll".into(),
+                open: true,
+            }],
+            sessions: vec![
+                at("s1", "/code/scroll"),
+                at("s2", "/code/scroll"),
+                at("s3", "/gone"),
+            ],
+            ..Default::default()
+        };
+        let pane = |sid: &str, path: &str| LivePane {
+            id: format!("%{sid}"),
+            sid: Some(sid.into()),
+            dead: false,
+            dead_status: None,
+            path: Some(path.into()),
+        };
+        let live = [pane("s1", "/code/algo"), pane("s3", "/elsewhere")];
+        let exists = |p: &Path| p == Path::new("/code/algo");
+        let moves = follow_moves(&mut st, &live, exists);
+        assert_eq!(moves, vec![("/code/scroll".into(), "/code/algo".into())]);
+        assert_eq!(st.projects[0].name, "algo");
+        assert_eq!(st.projects[0].path, PathBuf::from("/code/algo"));
+        assert!(st.sessions[..2]
+            .iter()
+            .all(|s| s.cwd == Path::new("/code/algo")));
+        assert_eq!(st.sessions[2].cwd, PathBuf::from("/gone"));
+        assert!(follow_moves(&mut st, &live, exists).is_empty());
     }
 
     #[test]

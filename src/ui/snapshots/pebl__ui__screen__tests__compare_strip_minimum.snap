@@ -1,0 +1,29 @@
+---
+source: src/ui/screen.rs
+assertion_line: 803
+expression: "snap(&v, 80, 24, Main::Lines(&t))"
+---
+ projects           3 │ nova-api / auth-refactor                     ● running
+                      │
+ ▾ nova-api       ◆ 1 │
+ › ● auth-refactor    │
+   ◆ migrate-staging  │
+   ○ docs-pass        │ > refactor the auth middleware to use the new session st
+                      │
+ ▾ billing-svc      3 │ ● Update(src/middleware/auth.ts)
+   ● onboarding-flow  │   ⎿  Updated src/middleware/auth.ts with 3 additions
+   ✕ e2e-tests        │
+   ○ a11y-audit       │ ✻ Refactoring… (47s · esc to interrupt)
+                      │
+                      │ ╭───────────────────────────────────────────────────────
+ + new session     ^n │ │ >
+ + new project     ^o │ ╰───────────────────────────────────────────────────────
+──────────────────────┴─────────────────────────────────────────────────────────
+ Compare · Speed up the dashboard query
+   attempt                      checks  files  added   removed   tokens   time
+   ○ …ed-up-the-dashboard-t4-1    ✓     3      +48     −12       182k     6m
+   ○ …ed-up-the-dashboard-t4-2    ✕     5      +130    −40       240k     9m
+ › ○ …ed-up-the-dashboard-t4-3    ✓     2      +21     −30       95k      4m
+   w again keeps speed-up-the-dashboard-t4-3 and discards the other attempts
+────────────────────────────────────────────────────────────────────────────────
+ enter open · d diff · w pick winner · esc back                   ◆ 1  4 active

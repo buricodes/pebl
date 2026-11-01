@@ -159,19 +159,32 @@ fn new_session(v: &View, p: &mut Painter, cwd: &str) {
     }
 }
 
+pub fn help_text() -> String {
+    HELP.iter()
+        .flat_map(|(title, rows)| {
+            std::iter::once(format!("{title}:"))
+                .chain(rows.iter().map(|(k, d)| format!("  {k}: {d}")))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "anywhere, even inside Claude",
         &[
             ("ctrl+j / ctrl+k", "next / previous session"),
-            ("ctrl+g", "jump to whatever needs you"),
-            ("ctrl+n", "new session in this project"),
-            ("ctrl+o", "new project"),
+            ("ctrl+g · ctrl+y", "next thing that needs you · list"),
+            ("ctrl+n · ctrl+o", "new session · new project"),
             ("ctrl+b", "hide / show the sidebar"),
             ("ctrl+space", "sidebar ↔ Claude"),
             ("ctrl+f", "search past conversations"),
             ("ctrl+x", "mark sessions, send one prompt"),
-            ("ctrl+q", "quit (sessions keep running)"),
+            ("ctrl+p", "saved prompts and recipes"),
+            (
+                "ctrl+q · alt+a",
+                "quit (sessions keep running) · ask Jel, or click it",
+            ),
         ],
     ),
     (
@@ -187,8 +200,9 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "shell drawer",
         &[
             ("ctrl+t", "open shell / back to Claude / hide"),
+            ("alt+t", "another shell beside it, or click + split"),
             ("alt+r", "type Claude's next command"),
-            ("alt+↑ / alt+↓", "resize the drawer"),
+            ("alt+↑↓ · alt+←→", "resize · move between shells"),
             ("alt+c", "send shell output to Claude"),
         ],
     ),
@@ -196,16 +210,16 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "in the sidebar",
         &[
             ("j / k · enter", "move · open or resume"),
-            ("space", "fold a project"),
+            ("space · J / K", "fold · move a project"),
             ("p", "peek at a session and answer it"),
-            ("d", "review its changes"),
-            ("f", "finish a worktree"),
-            ("c", "open it in a new column"),
-            ("w", "new worktree session"),
+            ("d · R", "review its changes · start a reviewer agent"),
+            ("f · P", "finish a worktree · queue its plan's tasks"),
+            ("c · w", "open in a new column · worktree session"),
+            ("t · T", "send failing checks to Claude · run checks"),
             ("r · x", "rename · kill"),
-            ("e", "open the folder in your editor"),
-            ("/", "filter"),
-            ("m", "mute mascot, chimes, alerts"),
+            ("e · H", "open in your editor · timeline, roll back"),
+            ("q · /", "task queue · filter"),
+            ("N · m", "add a project note · mute alerts"),
         ],
     ),
 ];

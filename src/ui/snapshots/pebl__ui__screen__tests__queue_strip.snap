@@ -1,0 +1,45 @@
+---
+source: src/ui/screen.rs
+assertion_line: 723
+expression: "snap(&v, 120, 40, Main::Lines(&t))"
+---
+ projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
+                              │
+ ▾ nova-api               ◆ 1 │
+ › ● auth-refactor         2m │
+   ◆ migrate-staging    input │
+   ○ docs-pass             1h │
+                              │
+ ▾ billing-svc              3 │
+   ● onboarding-flow      14s │
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │
+                              │
+ ▸ infra                    3 │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │ > refactor the auth middleware to use the new session store
+                              │
+                              │ ● Update(src/middleware/auth.ts)
+                              │   ⎿  Updated src/middleware/auth.ts with 3 additions
+                              │
+                              │ ✻ Refactoring… (47s · esc to interrupt)
+                              │
+                              │ ╭────────────────────────────────────────────────────────────────────────────────
+ + new session         ctrl+n │ │ >
+ + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ Queue · nova-api                                                            runs 2 at a time, each in its own worktree
+ › ◆ Fix the rota export for night shifts    ready · test, lint passed                                               3m
+   ● Speed up the dashboard query ×3         1 of 3 attempts done                                                   12m
+   ✕ Upgrade Prisma to v7                    typecheck failed                                                       20m
+   ○ Add CSV download to reports             waiting · #1 in line                                                   25m
+   ✓ Rename staff roles                      merged or closed                                                        1h
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ a add · enter open · d diff · D done · r retry · x remove · esc close                       ~/code/nova-api · 4 active

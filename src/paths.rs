@@ -48,6 +48,26 @@ pub fn tmux_conf() -> PathBuf {
     home().join("tmux.conf")
 }
 
+pub fn timeline() -> PathBuf {
+    home().join("timeline")
+}
+
+pub fn recipes() -> PathBuf {
+    home().join("recipes")
+}
+
+pub fn reviews() -> PathBuf {
+    home().join("reviews")
+}
+
+pub fn memory() -> PathBuf {
+    home().join("memory")
+}
+
+pub fn prompts() -> PathBuf {
+    home().join("prompts")
+}
+
 pub fn worktrees() -> PathBuf {
     home().join("worktrees")
 }

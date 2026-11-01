@@ -1,10 +1,10 @@
 use super::theme::Tok;
 use super::{fit, glyph, len, mascot, Painter};
-use crate::view::{Cursor, Layout, Mode, View};
+use crate::view::{CheckBadge, Cursor, Layout, Mode, View};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Pet {
-    Card,
+    Card(i32),
     Line,
     None,
 }
@@ -26,15 +26,15 @@ fn bottom(v: &View, h: i32) -> i32 {
     }
 }
 
-pub fn pet_rows(v: &View, h: u16) -> Option<(u16, u16)> {
-    mascot::current(v)?;
+pub fn pet_rows(v: &View, w: u16, h: u16) -> Option<(u16, u16)> {
     let b = bottom(v, h as i32);
-    let full = !matches!(v.layout, Layout::Compact(_));
-    if full && b >= 2 + mascot::CARD_H {
-        Some(((b - mascot::CARD_H) as u16, (b - 1) as u16))
-    } else {
-        let y = (b - 1).max(0) as u16;
-        Some((y, y))
+    match fit_rows(v, &rows(v), w as i32, h as i32).pet? {
+        (_, Pet::Card(ch)) => Some(((b - ch) as u16, (b - 1) as u16)),
+        (_, Pet::Line) => {
+            let y = (b - 1).max(0) as u16;
+            Some((y, y))
+        }
+        (_, Pet::None) => None,
     }
 }
 
@@ -122,8 +122,11 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
     let base = bottom(v, h);
     let pet = mascot::current(v).map(|c| {
         let need = top + rows.len() as i32;
-        if !compact && w >= 24 && need < base - mascot::CARD_H {
-            (c, Pet::Card)
+        let card = [mascot::card_h(v), mascot::CARD_H]
+            .into_iter()
+            .find(|ch| !compact && w >= 24 && need < base - ch);
+        if let Some(ch) = card {
+            (c, Pet::Card(ch))
         } else if need < base {
             (c, Pet::Line)
         } else {
@@ -131,7 +134,7 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
         }
     });
     let limit = match pet {
-        Some((_, Pet::Card)) => base - mascot::CARD_H - 1,
+        Some((_, Pet::Card(ch))) => base - ch - 1,
         Some((_, Pet::Line)) => base - 1,
         _ => base,
     };
@@ -241,6 +244,18 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
                     (len(&s.meta) + 1).max(6) as i32
                 };
                 let mw = mw + if g { 2 } else { 0 };
+                let mw = match s.check {
+                    Some(c) => {
+                        let (glyph, tok) = match c {
+                            CheckBadge::Running => ("…", Tok::Dim),
+                            CheckBadge::Passed => ("✓", Tok::Ok),
+                            CheckBadge::Failed => ("✕", Tok::Err),
+                        };
+                        p.t(w - 1 - mw - 1, y, glyph, tok, c == CheckBadge::Failed);
+                        mw + 2
+                    }
+                    None => mw,
+                };
                 if let Some(c) = s.ctx {
                     let gx = match (compact, s.col.is_some()) {
                         (true, true) => w - 6,
@@ -299,12 +314,12 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
     }
 
     match pet {
-        Some((c, Pet::Card)) => {
-            let ry = base - mascot::CARD_H - 1;
+        Some((c, Pet::Card(ch))) => {
+            let ry = base - ch - 1;
             p.hl(0, ry, w);
-            mascot::card(p, c, &v.notice, frame, 1, ry + 1, w);
+            mascot::card(p, c, v, frame, (1, ry + 1), w, ch);
         }
-        Some((c, Pet::Line)) => mascot::compact(p, c, &v.notice, frame, 1, base - 1, w),
+        Some((c, Pet::Line)) => mascot::compact(p, c, v, frame, 1, base - 1, w),
         _ => {}
     }
     if usage_h(v) > 0 {

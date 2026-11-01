@@ -37,6 +37,14 @@ pub fn run() -> Result<()> {
         pebl: pebl.clone(),
         claude: find_in_path("claude").unwrap_or_else(|| "claude".into()),
         settings: paths::claude_settings(),
+        prompts: paths::prompts(),
+        memory: paths::memory(),
+        reviews: paths::reviews(),
+        recipes: paths::recipes(),
+        timeline: paths::timeline(),
+        detect_checks: cfg.checks.unwrap_or(true),
+        clipboard: crate::prompts::clipboard,
+        ask: crate::jel::ask_claude,
         sock: sock.clone(),
         editor: crate::config::load(&paths::config())
             .ok()

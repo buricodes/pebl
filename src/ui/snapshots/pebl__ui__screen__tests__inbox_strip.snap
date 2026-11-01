@@ -1,0 +1,45 @@
+---
+source: src/ui/screen.rs
+assertion_line: 645
+expression: "snap(&v, 120, 40, Main::Lines(&t))"
+---
+ projects                   3 │ nova-api / auth-refactor                                                ● running · 2m
+                              │
+ ▾ nova-api               ◆ 1 │
+ › ● auth-refactor         2m │
+   ◆ migrate-staging    input │
+   ○ docs-pass             1h │
+                              │
+ ▾ billing-svc              3 │
+   ● onboarding-flow      14s │
+   ✕ e2e-tests         exit 1 │
+   ○ a11y-audit            3h │
+                              │
+ ▸ infra                    3 │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │ > refactor the auth middleware to use the new session store
+                              │
+                              │ ● Update(src/middleware/auth.ts)
+                              │   ⎿  Updated src/middleware/auth.ts with 3 additions
+                              │
+                              │ ✻ Refactoring… (47s · esc to interrupt)
+                              │
+                              │ ╭────────────────────────────────────────────────────────────────────────────────
+ + new session         ctrl+n │ │ >
+ + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ Needs you                                                                                         2 waiting · 4 in all
+ › ◆ nova-api        migrate-staging           wants to run Bash                                                     4m
+   ◆ infra           dns-cutover               waiting for input                                                     1m
+   ✕ billing-svc     e2e-tests                 exit 1                                                               12m
+   ✓ nova-api        docs-pass                 finished                                                              2m
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ enter open · p peek and answer · x dismiss · j/k move · esc close                           ~/code/nova-api · 4 active

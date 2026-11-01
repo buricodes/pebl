@@ -4,7 +4,7 @@
 - [x] Private tmux socket, spawn `claude` in a detached session, swap it into a split
 - [x] Inject hooks per session without editing `~/.claude/settings.json`
 - [x] Confirm hooks see `PEBL_SESSION_ID`; log every event payload to a file
-- [ ] Map real `Notification` payloads (permission vs idle)
+- [x] Map real `Notification` payloads (permission vs idle)
 
 ## M1: MVP
 - [x] `pebl` opens the two-pane layout, tmux chrome hidden
@@ -19,16 +19,17 @@
 - [x] `^g` jump to next waiting session
 - [x] Collapsible sidebar, auto-collapse under 100 cols
 - [x] Rename, filter
-- [ ] Reorder projects
+- [x] Reorder projects (`J` / `K`)
 - [x] Worktree sessions (`w`)
 - [x] Desktop notification / bell when a background session starts waiting
 - [x] `config.toml` keybinding overrides
 
 ## M3: Polish
-- [ ] Per-repo `pebl.toml` worktree setup steps (copy `.env`, install deps)
+- [x] Per-repo `pebl.toml` worktree setup steps (copy `.env`, install deps)
 - [x] Session resume via `claude --resume` on exited sessions
 - [x] Heuristic status fallback when hooks are missing
-- [ ] Homebrew tap + `cargo install`
+- [x] `cargo install --git`, `pebl update`, release notices
+- [ ] Homebrew tap and prebuilt binaries
 
 ## Extras (not in the original plan)
 - [x] Global summon hotkey (`pebl hotkey install`)
@@ -45,9 +46,26 @@
 - [x] Search past conversations and resume them
 - [x] Send one prompt to several sessions
 - [x] Shell drawer per session, run Claude's suggested commands, send output back
-- [ ] Saved prompts
+- [x] Saved prompts with `{{clipboard}}` (ctrl+p)
 
 ## Later
 - [ ] Agent adapters (Codex, OpenCode)
 - [ ] Embedded-PTY backend (no tmux)
 - [ ] Linux packaging, WSL
+
+## PRD v2 (docs/PRD-v2.md)
+- [ ] P1 Codex and OpenCode providers (on hold: no accounts to test with)
+- [x] P2 `ctrl+g` cycles through what needs you, "all clear" when nothing does
+- [x] P2 Inbox (`ctrl+y`): waiting, errored and finished sessions across projects
+- [x] P2 Terminal bell and OSC 9 notifications, chosen per event
+- [x] P3 Auto-checks after each turn, detected from the project (`pebl checks`, `t` / `T`, `auto_fix`)
+- [x] P3 Project notes (`N`), given to every new session with `--append-system-prompt-file`
+- [ ] P3 Budgets (skipped for now: seat plan, no per-token cost)
+- [x] P4 Task queue (`q`, `pebl queue add`, tasks.md, `max_parallel`)
+- [x] P4 Best-of-N with a compare view and winner pick
+- [x] P5 Reviewer agent (`R`, `[review] auto`), findings loaded into the review popup
+- [x] P5 Planner: `P` queues the tasks from a session's checklist
+- [x] P5 Merge-conflict helper in the finish flow
+- [x] P6 Recipes: multi-step workflows in ctrl+p and `pebl recipe`, with checks and review steps
+- [x] P6 Timeline (`H`) and per-turn checkpoints with rollback
+- [ ] P6 Triggers (CI, issues, schedule)

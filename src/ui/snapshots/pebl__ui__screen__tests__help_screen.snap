@@ -8,14 +8,14 @@ expression: "snap(&v, 120, 40, Main::Stage)"
  › ● auth-refactor         2m │
    ◆ migrate-staging    input │ anywhere, even inside Claude
    ○ docs-pass             1h │   ctrl+j / ctrl+k  next / previous session
-                              │   ctrl+g           jump to whatever needs you
- ▾ billing-svc              3 │   ctrl+n           new session in this project
-   ● onboarding-flow      14s │   ctrl+o           new project
-   ✕ e2e-tests         exit 1 │   ctrl+b           hide / show the sidebar
-   ○ a11y-audit            3h │   ctrl+space       sidebar ↔ Claude
-                              │   ctrl+f           search past conversations
- ▸ infra                    3 │   ctrl+x           mark sessions, send one prompt
-                              │   ctrl+q           quit (sessions keep running)
+                              │   ctrl+g · ctrl+y  next thing that needs you · list
+ ▾ billing-svc              3 │   ctrl+n · ctrl+o  new session · new project
+   ● onboarding-flow      14s │   ctrl+b           hide / show the sidebar
+   ✕ e2e-tests         exit 1 │   ctrl+space       sidebar ↔ Claude
+   ○ a11y-audit            3h │   ctrl+f           search past conversations
+                              │   ctrl+x           mark sessions, send one prompt
+ ▸ infra                    3 │   ctrl+p           saved prompts and recipes
+                              │   ctrl+q · alt+a   quit (sessions keep running) · ask Jel, or click it
                               │ columns
                               │   ctrl+\           open a session in a new column
                               │   alt+1 … alt+4    focus a column
@@ -23,22 +23,22 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   ctrl+w           close the focused column
                               │ shell drawer
                               │   ctrl+t           open shell / back to Claude / hide
+                              │   alt+t            another shell beside it, or click + split
                               │   alt+r            type Claude's next command
-                              │   alt+↑ / alt+↓    resize the drawer
+                              │   alt+↑↓ · alt+←→  resize · move between shells
                               │   alt+c            send shell output to Claude
                               │ in the sidebar
                               │   j / k · enter    move · open or resume
-                              │   space            fold a project
+                              │   space · J / K    fold · move a project
                               │   p                peek at a session and answer it
-                              │   d                review its changes
-                              │   f                finish a worktree
-                              │   c                open it in a new column
-                              │   w                new worktree session
+                              │   d · R            review its changes · start a reviewer agent
+                              │   f · P            finish a worktree · queue its plan's tasks
+                              │   c · w            open in a new column · worktree session
+                              │   t · T            send failing checks to Claude · run checks
                               │   r · x            rename · kill
-                              │   e                open the folder in your editor
-                              │   /                filter
-                              │   m                mute mascot, chimes, alerts
- + new session         ctrl+n │ macOS: alt keys need Option as Meta (Terminal › Settings › Profiles › Keyboard)
- + new project         ctrl+o │
+                              │   e · H            open in your editor · timeline, roll back
+                              │   q · /            task queue · filter
+ + new session         ctrl+n │   N · m            add a project note · mute alerts
+ + new project         ctrl+o │ macOS: alt keys need Option as Meta (Terminal › Settings › Profiles › Keyboard)
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- enter open · p peek · c column · d review · f finish · r rename · x kill              ◆ 1 waiting ctrl+g    · 4 active
+ enter open · p peek · c column · d review · f finish · r rename · x kill · ? help     ◆ 1 waiting ctrl+g    · 4 active
