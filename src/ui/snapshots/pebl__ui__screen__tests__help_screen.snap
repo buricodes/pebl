@@ -15,7 +15,7 @@ expression: "snap(&v, 120, 40, Main::Stage)"
    ○ a11y-audit            3h │   ctrl+f           search past conversations
                               │   ctrl+x           mark sessions, send one prompt
  ▸ infra                    3 │   ctrl+p           saved prompts and recipes
-                              │   ctrl+q · alt+a   quit (sessions keep running) · ask Jel
+                              │   ctrl+q · alt+a   quit (sessions keep running) · ask Jel, or click it
                               │ columns
                               │   ctrl+\           open a session in a new column
                               │   alt+1 … alt+4    focus a column
@@ -23,7 +23,7 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   ctrl+w           close the focused column
                               │ shell drawer
                               │   ctrl+t           open shell / back to Claude / hide
-                              │   alt+t            another shell beside it (exit closes one)
+                              │   alt+t            another shell beside it, or click + split
                               │   alt+r            type Claude's next command
                               │   alt+↑↓ · alt+←→  resize · move between shells
                               │   alt+c            send shell output to Claude

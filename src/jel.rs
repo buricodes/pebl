@@ -3,6 +3,8 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+const GUIDE: &str = include_str!("../docs/JEL.md");
+
 const ACTIONS: [(&str, &str); 9] = [
     ("shell", "opens a shell"),
     ("shell-new", "adds a shell"),
@@ -39,10 +41,11 @@ pub fn system_prompt(help: &str, sessions: &str) -> String {
     format!(
         "You are Jel, the jellyfish inside pebl, a terminal app that runs several Claude Code sessions side by side in tmux. \
 Answer the user's question about pebl or their sessions in ONE short line, under 90 characters, plain text, no markdown. \
-Name the exact key when there is one. If you don't know, say so in one line.\n\
+Answer from the pebl guide, the key list and their sessions below. Name the exact key, click or command when there is one. \
+If the guide doesn't cover it, say you don't know rather than guessing.\n\
 If the answer is something pebl can do right now, end the line with [do:ACTION], ACTION being one of: {}.\n\
 If the answer points at one of their sessions, end the line with [go:SESSION NAME].\n\n\
-pebl keys:\n{help}\n\nTheir sessions right now:\n{sessions}",
+{GUIDE}\n\npebl keys:\n{help}\n\nTheir sessions right now:\n{sessions}",
         actions.join(", ")
     )
 }
@@ -137,6 +140,7 @@ mod tests {
         assert_eq!(parse("try [do:rm -rf]"), ("try [do:rm -rf]".into(), None));
         assert_eq!(parse("plain"), ("plain".into(), None));
         assert_eq!(Act::Do("split".into()).label(), "opens a column");
-        assert!(system_prompt("k", "s").contains("shell-new"));
+        let p = system_prompt("k", "s");
+        assert!(p.contains("shell-new") && p.contains("ntfy.sh") && p.contains("+ split"));
     }
 }

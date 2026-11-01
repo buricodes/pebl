@@ -87,6 +87,8 @@ The first time, press **enter** to add the current folder and start a session. p
 | `alt+r` | type the next command from Claude's last code block into the shell (you press enter) |
 | `alt+↑` / `alt+↓` | resize the shell drawer (then `↑/↓`, `shift` for 5, `=` for half, `enter`) |
 | `alt+c` | paste the end of the shell's output into Claude's input |
+| `alt+t` | another shell beside the current one (or click `+ split`); `alt+←/→` moves between them |
+| `alt+a` | ask Jel how to do anything in pebl (or click Jel) |
 | `ctrl+f` | search every past Claude Code conversation, and resume one |
 | `ctrl+x` | mark sessions (`space`, `a` for a whole project), then `enter` to send them all one prompt |
 | `ctrl+p` | saved prompts: pick one and send it, with your clipboard filled in |
@@ -100,6 +102,8 @@ The bottom bar shows the few keys that matter for what's selected right now (a w
 ### Shell drawer
 
 `ctrl+t` opens a real shell (your `$SHELL`) in the session's folder, under the Claude pane. Each session has its own, and it keeps its history and running processes when you switch sessions or hide it. Press `ctrl+t` from the shell to go back to Claude, and again from Claude to hide it; dragging its border to the bottom hides it too.
+
+Need two at once, like a backend and a frontend? While in a shell, click `+ split` at the bottom right of the status bar (or press `alt+t`) for another shell beside it in the same folder. `× close` closes the one you're in (so does `exit`), and `alt+←/→` or a click moves between them.
 
 When Claude's last reply contains a shell code block, the status bar offers `alt+r`: it opens the drawer and types the first line at the prompt without running it. Press `enter` to run it, `alt+r` again for the next line. While the drawer is hidden, a line above the status bar shows what's running in it; if the command fails, the line turns red with the error, and `alt+c` pastes the end of the output into Claude's input so you can ask about it.
 
@@ -282,6 +286,10 @@ The numbers come from a small statusline that pebl gives each session (`pebl sta
 
 The bottom of the sidebar holds a mascot that works as a notification line. Its face and colour show the most urgent state across all sessions (needs you › error › finished › working › idle) and the text beside it names the session, what it wants, and the key to act on it. `ctrl+g` (or clicking it) goes straight there. In a short or narrow sidebar it shrinks to a one-line face; `m` mutes it along with the bell.
 
+When every session is idle, Jel shows a tip every 10 seconds, starting with features you haven't used yet.
+
+**Ask Jel.** Click Jel (or `ask jel` in the status bar, or press `alt+a`) and ask anything about pebl or your sessions: "how do I run two terminals?", "which chat is waiting on me?". It answers in one line using your own Claude Code (`claude -p` with Haiku, so no API key, and a little of your plan per question), from a guide built into pebl ([docs/JEL.md](docs/JEL.md)) and your live sessions. When the answer is something pebl can do, `enter` does it.
+
 The default is Jel the jellyfish. Run `pebl mascots` to see the others (pebl, shroom, toast, nib, hoot) in every mood and pick one, or `o` there to turn it off.
 
 ## Configure
@@ -322,6 +330,7 @@ mark = "C-x"
 shell = "C-t"         # Claude Code uses ctrl+t to show its task list; rebind if you rely on it
 prompts = "C-p"       # saved prompts; inside Claude ctrl+p is otherwise "previous line"
 inbox = "C-y"         # everything that needs you
+ask = "M-a"           # ask Jel
 ```
 
 The defaults follow the design and override some Claude Code shortcuts while pebl is open: `ctrl+b` (background a bash command), `ctrl+o` (transcript), `ctrl+g` (open the prompt in your editor), and `ctrl+j` (newline). While columns are open, `ctrl+w` closes a column instead of deleting a word. Rebind any of these if you rely on them. On macOS, `ctrl+space` may also be the input-source switch.
