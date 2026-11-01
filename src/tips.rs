@@ -55,19 +55,19 @@ pub const TIPS: [Tip; 18] = [
     tip("/compact", "context gauge going red? compact early", ""),
 ];
 
-pub const EVERY_SECS: u64 = 180;
+pub const EVERY_SECS: u64 = 10;
 
 pub fn tracks(feature: &str) -> bool {
     !feature.is_empty() && TIPS.iter().any(|t| t.feature == feature)
 }
 
 pub fn pick(used: &BTreeSet<String>, at: u64) -> (usize, &'static Tip) {
-    let new = |t: &Tip| !t.feature.is_empty() && !used.contains(t.feature);
-    let any_new = TIPS.iter().any(new);
-    let pool: Vec<usize> = (0..TIPS.len())
-        .filter(|i| !any_new || new(&TIPS[*i]) || TIPS[*i].feature.is_empty())
+    let seen = |i: &usize| used.contains(TIPS[*i].feature);
+    let order: Vec<usize> = (0..TIPS.len())
+        .filter(|i| !seen(i))
+        .chain((0..TIPS.len()).filter(seen))
         .collect();
-    let i = pool[(at / EVERY_SECS) as usize % pool.len()];
+    let i = order[(at / EVERY_SECS) as usize % order.len()];
     (i, &TIPS[i])
 }
 
@@ -82,11 +82,9 @@ mod tests {
         assert_eq!(pick(&used, EVERY_SECS).0, 1);
         used.insert("shell".to_string());
         assert_eq!(pick(&used, 0).0, 1);
-        for t in &TIPS {
-            used.insert(t.feature.to_string());
-        }
-        assert_eq!(pick(&used, 0).0, 0);
-        assert_eq!(pick(&used, EVERY_SECS * 17).0, 17);
+        assert_eq!(pick(&used, EVERY_SECS * 17).0, 0);
+        let all: Vec<usize> = (0..18).map(|n| pick(&used, EVERY_SECS * n).0).collect();
+        assert_eq!(all.iter().collect::<BTreeSet<_>>().len(), 18);
         assert!(tracks("key q") && !tracks("") && !tracks("next"));
     }
 

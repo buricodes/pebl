@@ -317,31 +317,30 @@ fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32),
     let (x, y) = at;
     draw(p, c, tip_pose(f), Tok::Acc, false, x, y);
     let tw = (w - x - TEXT_X).max(0) as usize;
-    let key = vec![segb(t.key.clone(), Tok::Acc)];
-    let count = vec![
-        seg("tip", Tok::Mute),
-        seg(format!(" · {}/{}", t.at, t.total), Tok::Dim),
+    let head = vec![
+        segb(t.key.clone(), Tok::Acc),
+        seg(format!("  tip {}/{}", t.at, t.total), Tok::Dim),
     ];
-    let beside: Vec<Vec<Seg>> = if h > CARD_H {
-        let bw = (w - x - 1).max(1) as usize;
-        for (i, line) in wrap(&t.text, bw, TIP_LINES as usize).iter().enumerate() {
-            p.t(x, y + CARD_H + i as i32, line, Tok::Fg, false);
-        }
-        vec![key, count, Vec::new(), ask_hint(false)]
-    } else {
-        let mut first = key;
-        first.push(seg("  ", Tok::Dim));
-        first.extend(count);
-        let mut lines = vec![first];
-        lines.extend(
-            wrap(&t.text, tw, 2)
-                .into_iter()
-                .map(|l| vec![seg(l, Tok::Fg)]),
-        );
-        lines.resize(3, Vec::new());
-        lines.push(ask_hint(false));
-        lines
+    let tip_lines = |width: usize| -> Vec<Vec<Seg>> {
+        wrap(&t.text, width.saturating_sub(2).max(1), TIP_LINES as usize)
+            .into_iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let mark = if i == 0 { "✦ " } else { "  " };
+                vec![seg(mark, Tok::Acc), seg(l, Tok::Fg)]
+            })
+            .collect()
     };
+    let mut beside = vec![ask_hint(false), Vec::new(), head];
+    if h > CARD_H {
+        let bw = (w - x - 1).max(1) as usize;
+        for (i, line) in tip_lines(bw).iter().enumerate() {
+            p.segs(x, y + CARD_H + i as i32, line);
+        }
+    } else {
+        beside.remove(1);
+        beside.extend(tip_lines(tw));
+    }
     for (i, line) in beside.iter().enumerate() {
         p.segs(x + TEXT_X, y + i as i32, &fit_segs(line, tw));
     }

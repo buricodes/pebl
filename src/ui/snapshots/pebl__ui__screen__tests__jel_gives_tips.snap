@@ -31,12 +31,12 @@ expression: "snap(&v, 120, 40, Main::Lines(&t))"
                               │
                               │
 ──────────────────────────────│ > refactor the auth middleware to use the new session store
-   ▄▆██▆▄   ctrl+x            │
-   █•██•█   tip · 9/18        │ ● Update(src/middleware/auth.ts)
-   ▌▐ ▌▐                      │   ⎿  Updated src/middleware/auth.ts with 3 additions
-   ▘ ▝▘ ▝   alt+a ask jel     │
- marks many chats, one prompt │ ✻ Refactoring… (47s · esc to interrupt)
- to all                       │
+   ▄▆██▆▄   alt+a ask jel     │
+   █•██•█                     │ ● Update(src/middleware/auth.ts)
+   ▌▐ ▌▐    ctrl+x  tip 9/18  │   ⎿  Updated src/middleware/auth.ts with 3 additions
+   ▘ ▝▘ ▝                     │
+ ✦ marks many chats, one      │ ✻ Refactoring… (47s · esc to interrupt)
+   prompt to all              │
                               │ ╭────────────────────────────────────────────────────────────────────────────────
  + new session         ctrl+n │ │ >
  + new project         ctrl+o │ ╰────────────────────────────────────────────────────────────────────────────────
