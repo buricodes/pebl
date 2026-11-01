@@ -1,6 +1,6 @@
 use super::theme::Tok;
 use super::{fit, len, seg, segb, Painter, Seg};
-use crate::view::{Notice, NoticeKind, TipView, View};
+use crate::view::{Notice, NoticeKind, View};
 
 pub const CARD_H: i32 = 4;
 const TIP_LINES: i32 = 2;
@@ -332,7 +332,20 @@ fn ask_hint() -> Vec<Seg> {
     vec![segb("click me", Tok::Fg), seg(" to ask", Tok::Dim)]
 }
 
-fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32), w: i32, h: i32) {
+fn quiet(n: &Notice) -> Vec<Seg> {
+    match n.count {
+        0 => vec![seg("no chats yet", Tok::Mute)],
+        c => vec![
+            seg("all quiet", Tok::Mute),
+            seg(format!(" · {c} idle"), Tok::Dim),
+        ],
+    }
+}
+
+fn tip_card(p: &mut Painter, c: &Character, v: &View, f: u64, at: (i32, i32), w: i32, h: i32) {
+    let Some(t) = &v.tip else {
+        return;
+    };
     let (x, y) = at;
     draw(p, c, tip_pose(f), Tok::Acc, false, x, y);
     let tw = (w - x - TEXT_X).max(0) as usize;
@@ -350,7 +363,7 @@ fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32),
             })
             .collect()
     };
-    let mut beside = vec![ask_hint(), Vec::new(), head];
+    let mut beside = vec![ask_hint(), quiet(&v.notice), head];
     if h > CARD_H {
         let bw = (w - x - 1).max(1) as usize;
         for (i, line) in tip_lines(bw).iter().enumerate() {
@@ -367,7 +380,7 @@ fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32),
 
 pub fn card(p: &mut Painter, c: &Character, v: &View, f: u64, at: (i32, i32), w: i32, h: i32) {
     match &v.tip {
-        Some(t) => tip_card(p, c, t, f, at, w, h),
+        Some(_) => tip_card(p, c, v, f, at, w, h),
         None => notice_card(p, c, &v.notice, f, at.0, at.1, w),
     }
 }

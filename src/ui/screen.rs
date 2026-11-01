@@ -361,6 +361,7 @@ mod tests {
     #[test]
     fn jel_gives_tips() {
         let mut v = base();
+        v.notice.count = 4;
         v.mascot = Some("jel".into());
         v.tip = Some(tip());
         let t = transcript();
