@@ -144,10 +144,6 @@ auto_fix = 2      # send failures back to Claude by itself, up to twice per task
 
 An empty `[checks]` table turns them off for that project; `checks = false` in `~/.pebl/config.toml` turns detection off everywhere.
 
-### Inbox
-
-`ctrl+y` lists every session that needs you, across all projects: waiting ones first (longest waiting at the top, with what they want, like `wants to run Bash`), then ones that stopped with an error, then ones that finished while you weren't looking. `enter` opens one, `p` peeks and answers it without switching, `x` dismisses an error or finished one, `esc` closes. Finished sessions drop off on their own once you've looked at them, or after 15 minutes. With two or more waiting, the status bar shows `ctrl+y list`.
-
 ### Task queue and best of N
 
 `q` in the sidebar opens the selected project's queue. `a` adds a task (type it, `enter`); pebl starts it in a fresh git worktree session as soon as a slot is free, without switching your screen. When its turn ends and the project's checks pass, it moves to "needs review" and the next task starts. Two run at a time by default; to change that, add this to the project's settings (`~/.pebl/projects/…` or `pebl.toml`):
