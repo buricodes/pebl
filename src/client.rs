@@ -127,7 +127,14 @@ fn run_loop(role: Role) -> Result<()> {
                     .as_ref()
                     .and_then(|v| sidebar::pet_rows(v, h))
                     .is_some_and(|(a, b)| m.row >= a && m.row <= b);
-                if role == Role::Tabs {
+                let w = term.size().map(|s| s.width).unwrap_or(0);
+                let button = (role == Role::Bar && m.row + 1 == h)
+                    .then(|| view.as_ref().and_then(|v| bar::button_at(v, w, m.column)))
+                    .flatten();
+                if let Some(action) = button {
+                    let _ = crate::ipc::ctl(&paths::sock(), &[action.into()]);
+                    None
+                } else if role == Role::Tabs {
                     Some(Input::Click {
                         x: m.column,
                         y: m.row,
@@ -140,7 +147,6 @@ fn run_loop(role: Role) -> Result<()> {
                 } else if m.row + 1 == h {
                     Some(Input::Key(Key::plain(KeyCode::Char('o'))))
                 } else {
-                    let w = term.size().map(|s| s.width).unwrap_or(0);
                     view.as_ref()
                         .and_then(|v| sidebar::list_row(v, w, h, m.row))
                         .map(|y| Input::Click { x: m.column, y })

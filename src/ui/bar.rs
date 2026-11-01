@@ -1023,6 +1023,27 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
     p.segs(w - seg_len(&right) as i32 - 1, y, &right);
 }
 
+const SHELL_BUTTONS: [(&str, Tok, &str); 2] = [
+    ("+ split", Tok::Acc, "shell-new"),
+    ("× close", Tok::Mute, "shell-close"),
+];
+
+pub fn button_at(v: &View, w: u16, x: u16) -> Option<&'static str> {
+    let (_, right) = status(v);
+    let mut end = w.saturating_sub(1) as usize;
+    for s in right.iter().rev() {
+        let start = end.saturating_sub(len(&s.0));
+        if (start..end).contains(&(x as usize)) {
+            return SHELL_BUTTONS
+                .iter()
+                .find(|(label, _, _)| *label == s.0)
+                .map(|(_, _, action)| *action);
+        }
+        end = start;
+    }
+    None
+}
+
 pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
     let short = v.layout.short_keys();
     let k = |long: &'static str, sh: &'static str| if short { sh } else { long };
@@ -1058,13 +1079,12 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             list.push(("alt+r", n.as_str()));
         }
         let many = v.shell.as_ref().is_some_and(|s| s.count > 1);
-        list.push(("alt+t", "new shell"));
         if many {
             list.push(("alt+←/→", "switch"));
         }
         list.push(("ctrl+t", "back to Claude"));
         let left = keys(&list);
-        let right = match &v.shell {
+        let mut right = match &v.shell {
             Some(s) if many => vec![
                 segb(format!("shell {} of {}", s.at, s.count), Tok::Fg),
                 seg(format!(" · {}", s.shell), Tok::Mute),
@@ -1077,6 +1097,10 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ],
             None => Vec::new(),
         };
+        for (label, tok, _) in SHELL_BUTTONS {
+            right.push(seg("   ", Tok::Fg));
+            right.push(segb(label, tok));
+        }
         return (left, right);
     }
     if let Some(d) = v.resizing {

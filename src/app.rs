@@ -474,6 +474,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             ["finish", sid] => self.start_finish(sid).map(|_| String::new()),
             ["shell"] => self.toggle_shell().map(|_| String::new()),
             ["shell-new"] => self.new_shell().map(|_| String::new()),
+            ["shell-close"] => self.close_shell().map(|_| String::new()),
             ["run-next"] => self.run_next().map(|_| String::new()),
             ["shell-to-claude"] => self.shell_to_claude().map(|_| String::new()),
             ["drawer-resize", dir] => {
@@ -2182,6 +2183,33 @@ impl<B: SessionBackend + UiBackend> App<B> {
         self.cancel_mode();
         self.open_drawer()?;
         self.set_focus(Focus::Shell);
+        Ok(())
+    }
+
+    fn close_shell(&mut self) -> Result<()> {
+        let sid = self
+            .active
+            .clone()
+            .ok_or_else(|| anyhow!("open a session first"))?;
+        let pane = self
+            .current_shell(&sid)
+            .ok_or_else(|| anyhow!("this session has no shell"))?;
+        let list = self.shells.entry(sid.clone()).or_default();
+        let at = list.iter().position(|p| *p == pane).unwrap_or(0);
+        list.retain(|p| *p != pane);
+        self.shell_focus = list.get(at.min(list.len().saturating_sub(1))).cloned();
+        if list.is_empty() {
+            self.shells.remove(&sid);
+            self.drawer.remove(&sid);
+        }
+        self.shell_run.remove(&pane);
+        self.be.kill(&pane)?;
+        self.apply_layout();
+        self.set_focus(if self.drawer_shown.is_empty() {
+            Focus::Main
+        } else {
+            Focus::Shell
+        });
         Ok(())
     }
 
@@ -5422,7 +5450,11 @@ mod tests {
         let out = a.handle_ctl(&["shell-new".into()]);
         assert!(out.contains("no room"), "{out}");
 
-        a.kill(&CurRef::Session(sid)).unwrap();
+        a.handle_ctl(&["shell-close".into()]);
+        assert_eq!(a.drawer_shown.len(), 1);
+        assert_eq!(a.view().focus, Focus::Shell);
+        a.handle_ctl(&["shell-new".into()]);
+        a.kill(&CurRef::Session(sid.clone())).unwrap();
         assert!(a.shells.is_empty());
     }
 

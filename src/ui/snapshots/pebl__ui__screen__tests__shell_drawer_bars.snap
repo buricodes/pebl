@@ -3,8 +3,9 @@ source: src/ui/screen.rs
 expression: out
 ---
  alt+r run in shell · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 1 waiting ctrl+g   …i · 4 active
- enter run · alt+r next line (2 of 3) · alt+t new shell · ctrl+t back to Claude           shell · ~/code/nova-api · zsh
- enter run · alt+r next line (2 of 3) · alt+t new shell · alt+←/→ switch · ctrl+t back to Claude     shell 2 of 3 · zsh
+ enter run · alt+r next line (2 of 3) · ctrl+t back to Claude         shell · ~/code/nova-api · zsh   + split   × close
+ enter run · alt+r next line (2 of 3) · alt+←/→ switch · ctrl+t back to Claude   shell 2 of 3 · zsh   + split   × close
+ enter run · alt+r next line (2 of 3)    shell 2 of 3 · zsh   + split   × close
  RESIZE  ↑/↓ 1 row · shift+↑/↓ 5 rows · = half · enter done   claude 11 ━ shell 23   min 6 · drag to the bottom to hide
  ● shell · npm run dev · running                                                                            ctrl+t open
  ctrl+n new session · ctrl+t shell · ctrl+j/k switch · ctrl+b sidebar · ctrl+q quit  ◆ 1 waiting ctrl+g   …i · 4 active

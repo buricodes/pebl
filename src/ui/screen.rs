@@ -1024,6 +1024,21 @@ mod tests {
             ..sh(true, None, None, None)
         });
         line(&v, 120);
+        let buttons: Vec<Option<&str>> = [100, 104, 113, 117, 119]
+            .iter()
+            .map(|x| bar::button_at(&v, 120, *x))
+            .collect();
+        assert_eq!(
+            buttons,
+            vec![
+                None,
+                Some("shell-new"),
+                Some("shell-close"),
+                Some("shell-close"),
+                None
+            ]
+        );
+        line(&v, 80);
         v.shell = Some(sh(true, None, None, Some((11, 23))));
         line(&v, 120);
         v.focus = Focus::Main;
