@@ -31,7 +31,7 @@ expression: "snap(&v, 120, 40, Main::Lines(&t))"
                               │
                               │
 ──────────────────────────────│ > refactor the auth middleware to use the new session store
-   ▄▆██▆▄   alt+a ask jel     │
+   ▄▆██▆▄   click me to ask   │
    █•██•█                     │ ● Update(src/middleware/auth.ts)
    ▌▐ ▌▐    ctrl+x  tip 9/18  │   ⎿  Updated src/middleware/auth.ts with 3 additions
    ▘ ▝▘ ▝                     │

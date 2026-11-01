@@ -328,11 +328,8 @@ fn wrap(text: &str, w: usize, lines: usize) -> Vec<String> {
     out.iter().map(|l| fit(l, w)).collect()
 }
 
-pub fn ask_hint(short: bool) -> Vec<Seg> {
-    vec![
-        seg(if short { "M-a" } else { "alt+a" }, Tok::Fg),
-        seg(" ask jel", Tok::Dim),
-    ]
+fn ask_hint() -> Vec<Seg> {
+    vec![segb("click me", Tok::Fg), seg(" to ask", Tok::Dim)]
 }
 
 fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32), w: i32, h: i32) {
@@ -353,7 +350,7 @@ fn tip_card(p: &mut Painter, c: &Character, t: &TipView, f: u64, at: (i32, i32),
             })
             .collect()
     };
-    let mut beside = vec![ask_hint(false), Vec::new(), head];
+    let mut beside = vec![ask_hint(), Vec::new(), head];
     if h > CARD_H {
         let bw = (w - x - 1).max(1) as usize;
         for (i, line) in tip_lines(bw).iter().enumerate() {

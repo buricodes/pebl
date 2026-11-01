@@ -1094,8 +1094,18 @@ fn peek(pk: &Peek, p: &mut Painter) {
 }
 
 fn status_row(v: &View, p: &mut Painter, y: i32) {
+    let w = p.w();
+    let (left, right) = status_layout(v, w.max(0) as usize);
+    let x = p.segs(0, y, &left);
+    if let Mode::Filter { .. } | Mode::Note { .. } = v.mode {
+        p.caret(x, y);
+    }
+    p.segs(w - seg_len(&right) as i32 - 1, y, &right);
+}
+
+fn status_layout(v: &View, w: usize) -> (Vec<Seg>, Vec<Seg>) {
     let (mut left, mut right) = status(v);
-    let over = (seg_len(&left) + seg_len(&right) + 3).saturating_sub(p.w().max(0) as usize);
+    let over = (seg_len(&left) + seg_len(&right) + 3).saturating_sub(w);
     if over > 0 {
         if let Some(s) = right.iter_mut().find(|s| s.0 == v.path) {
             s.0 = fit_left(&s.0, len(&s.0).saturating_sub(over));
@@ -1108,7 +1118,7 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
         }
     }
     let tail = left.split_off(cut);
-    let room = (p.w().max(0) as usize).saturating_sub(seg_len(&right) + seg_len(&tail) + 3);
+    let room = w.saturating_sub(seg_len(&right) + seg_len(&tail) + 3);
     while seg_len(&left) > room && left.len() > 1 {
         while let Some(s) = left.pop() {
             if s.0 == " · " || left.len() <= 1 {
@@ -1117,12 +1127,7 @@ fn status_row(v: &View, p: &mut Painter, y: i32) {
         }
     }
     left.extend(tail);
-    let x = p.segs(0, y, &left);
-    if let Mode::Filter { .. } | Mode::Note { .. } = v.mode {
-        p.caret(x, y);
-    }
-    let w = p.w();
-    p.segs(w - seg_len(&right) as i32 - 1, y, &right);
+    (left, right)
 }
 
 const SHELL_BUTTONS: [(&str, Tok, &str); 2] = [
@@ -1130,20 +1135,31 @@ const SHELL_BUTTONS: [(&str, Tok, &str); 2] = [
     ("× close", Tok::Mute, "shell-close"),
 ];
 
+const CLICKS: [(&str, &str); 4] = [
+    ("+ split", "shell-new"),
+    ("× close", "shell-close"),
+    ("alt+a", "ask"),
+    (" ask jel", "ask"),
+];
+
 pub fn button_at(v: &View, w: u16, x: u16) -> Option<&'static str> {
-    let (_, right) = status(v);
-    let mut end = w.saturating_sub(1) as usize;
-    for s in right.iter().rev() {
-        let start = end.saturating_sub(len(&s.0));
-        if (start..end).contains(&(x as usize)) {
-            return SHELL_BUTTONS
-                .iter()
-                .find(|(label, _, _)| *label == s.0)
-                .map(|(_, _, action)| *action);
+    let (left, right) = status_layout(v, w as usize);
+    let right_x = (w as usize).saturating_sub(seg_len(&right) + 1);
+    let mut at = Vec::new();
+    for (segs, mut start) in [(left, 0), (right, right_x)] {
+        for s in segs {
+            at.push((start, s.0.clone()));
+            start += len(&s.0);
         }
-        end = start;
     }
-    None
+    let (_, label) = at
+        .iter()
+        .rev()
+        .find(|(start, label)| (*start..start + len(label)).contains(&(x as usize)))?;
+    CLICKS
+        .iter()
+        .find(|(l, _)| l == label)
+        .map(|(_, action)| *action)
 }
 
 pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {

@@ -368,6 +368,20 @@ mod tests {
     }
 
     #[test]
+    fn ask_jel_is_clickable_in_the_status_bar() {
+        let mut v = base();
+        v.hints = vec![
+            ("ctrl+p".into(), "prompts".into()),
+            ("alt+a".into(), "ask jel".into()),
+        ];
+        let at = |x| bar::button_at(&v, 120, x);
+        assert_eq!(
+            (at(3), at(20), at(26), at(40)),
+            (None, Some("ask"), Some("ask"), None)
+        );
+    }
+
+    #[test]
     fn jel_tip_short_window() {
         let mut v = base();
         v.mascot = Some("jel".into());
