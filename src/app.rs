@@ -1533,6 +1533,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
     fn refresh_panes(&mut self) {
         let Ok(live) = self.be.list() else { return };
         crate::store::reconcile(&mut self.st, &live);
+        for (from, to) in crate::store::follow_moves(&mut self.st, &live, |p| p.is_dir()) {
+            self.flash(format!(
+                "{} moved to {}; pebl follows it",
+                tilde(&from),
+                tilde(&to)
+            ));
+        }
         self.dead = live
             .iter()
             .filter(|p| p.dead)
@@ -2156,6 +2163,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .st
             .session(sid)
             .ok_or_else(|| anyhow!("no such session"))?;
+        if !s.cwd.is_dir() {
+            bail!("{} doesn't exist any more", tilde(&s.cwd));
+        }
         let n = self.shells.get(sid).map_or(0, Vec::len) as u16 + 1;
         let w = self.col_w.first().copied().unwrap_or(self.main_width());
         if n > 1 && w / n < MIN_SHELL_W {
@@ -4157,6 +4167,7 @@ mod tests {
                 sid: Some(spec.sid.clone()),
                 dead: false,
                 dead_status: None,
+                path: Some(spec.cwd.clone()),
             });
             Ok(id)
         }

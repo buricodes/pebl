@@ -210,7 +210,7 @@ impl SessionBackend for Tmux {
             "list-panes",
             "-a",
             "-F",
-            "#{pane_id}\t#{@pebl_sid}\t#{pane_dead}\t#{pane_dead_status}",
+            "#{pane_id}\t#{@pebl_sid}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_path}",
         ])?;
         Ok(out.lines().filter_map(parse_pane).collect())
     }
@@ -736,11 +736,16 @@ fn parse_pane(line: &str) -> Option<LivePane> {
     let sid = f.next().filter(|s| !s.is_empty()).map(str::to_string);
     let dead = f.next() == Some("1");
     let dead_status = f.next().and_then(|s| s.parse().ok());
+    let path = f
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
     Some(LivePane {
         id,
         sid,
         dead,
         dead_status,
+        path,
     })
 }
 
@@ -871,14 +876,15 @@ mod tests {
 
     #[test]
     fn parses_panes() {
-        let p = parse_pane("%3\ts1\t1\t2").unwrap();
+        let p = parse_pane("%3\ts1\t1\t2\t/code/app").unwrap();
         assert_eq!(
             p,
             LivePane {
                 id: "%3".into(),
                 sid: Some("s1".into()),
                 dead: true,
-                dead_status: Some(2)
+                dead_status: Some(2),
+                path: Some("/code/app".into()),
             }
         );
         assert_eq!(parse_pane("%4\t\t0\t").unwrap().sid, None);

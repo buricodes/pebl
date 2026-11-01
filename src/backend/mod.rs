@@ -9,6 +9,7 @@ pub struct LivePane {
     pub sid: Option<String>,
     pub dead: bool,
     pub dead_status: Option<i32>,
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
