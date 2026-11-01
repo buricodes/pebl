@@ -19,7 +19,12 @@ type Writer = Arc<Mutex<Option<UnixStream>>>;
 pub fn run(role: Role) -> Result<()> {
     terminal::enable_raw_mode()?;
     let mut out = std::io::stdout();
-    execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;
+    execute!(
+        out,
+        terminal::EnterAlternateScreen,
+        cursor::Hide,
+        event::EnableBracketedPaste
+    )?;
     let mouse = matches!(role, Role::Sidebar | Role::Tabs | Role::Bar);
     if mouse {
         execute!(out, event::EnableMouseCapture)?;
@@ -30,6 +35,7 @@ pub fn run(role: Role) -> Result<()> {
     }
     let _ = execute!(
         std::io::stdout(),
+        event::DisableBracketedPaste,
         cursor::Show,
         terminal::LeaveAlternateScreen
     );
@@ -155,6 +161,7 @@ fn run_loop(role: Role) -> Result<()> {
                         .map(|y| Input::Click { x: m.column, y })
                 }
             }
+            Event::Paste(text) => Some(Input::Paste(text)),
             Event::Resize(..) => {
                 redraw = true;
                 None

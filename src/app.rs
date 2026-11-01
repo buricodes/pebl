@@ -753,6 +753,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 Ok(())
             }
             Input::Click { x: _, y } => self.click(y),
+            Input::Paste(text) => self.paste(role, &text),
         };
         if let Err(e) = res {
             self.flash(format!("{e:#}"));
@@ -3134,6 +3135,26 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
+    fn paste(&mut self, role: Role, text: &str) -> Result<()> {
+        if !matches!(self.mode, IMode::Normal) {
+            let flat = text
+                .chars()
+                .map(|c| if c.is_whitespace() { ' ' } else { c });
+            for c in flat.filter(|c| !c.is_control()) {
+                self.key(role, Key::plain(KeyCode::Char(c)))?;
+            }
+            return Ok(());
+        }
+        let pane = self
+            .active
+            .as_ref()
+            .and(self.focused_pane())
+            .ok_or_else(|| anyhow!("open a chat first, then drop it there"))?;
+        self.be.send_text(&pane, text, false)?;
+        self.set_focus(Focus::Main);
+        Ok(())
+    }
+
     fn click(&mut self, y: u16) -> Result<()> {
         if self.in_strip() {
             self.cancel_mode();
@@ -5445,6 +5466,31 @@ mod tests {
         a.handle_ctl(&["ask".into()]);
         a.handle_input(Role::Sidebar, Input::Click { x: 3, y: 2 });
         assert_eq!(a.view().mode, Mode::Normal);
+    }
+
+    #[test]
+    fn dropped_files_go_to_claude_not_the_sidebar() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        a.set_focus(Focus::Sidebar);
+        let drop = "/Users/me/Desktop/shot.png";
+        a.handle_input(Role::Sidebar, Input::Paste(drop.into()));
+        assert_eq!(a.view().mode, Mode::Normal);
+        assert_eq!(a.view().focus, Focus::Main);
+        let pane = a.st.sessions[0].pane.clone().unwrap();
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("send {pane} {drop:?} false")),
+            "{log}"
+        );
+
+        a.handle_ctl(&["ask".into()]);
+        a.handle_input(Role::Bar, Input::Paste("what is\nthis".into()));
+        let Mode::Ask(av) = a.view().mode else {
+            panic!()
+        };
+        assert_eq!(av.text, "what is this");
     }
 
     #[test]

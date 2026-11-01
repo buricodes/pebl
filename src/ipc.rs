@@ -35,6 +35,7 @@ pub enum Hello {
 pub enum Input {
     Key(Key),
     Click { x: u16, y: u16 },
+    Paste(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
