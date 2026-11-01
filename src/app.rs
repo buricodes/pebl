@@ -1370,10 +1370,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if self.muted || self.mascot.is_none() {
             return None;
         }
-        if !matches!(
-            self.notice(counts).kind,
-            NoticeKind::Idle | NoticeKind::Working
-        ) {
+        if self.notice(counts).kind != NoticeKind::Idle {
             return None;
         }
         let (i, t) = crate::tips::pick(&self.st.used, now());
@@ -5386,6 +5383,20 @@ mod tests {
         a.handle_ctl(&["add".into(), d.path().display().to_string()]);
         a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
         assert!(a.view().tip.is_some());
+        let sid = a.st.sessions[0].id.clone();
+        for (hook, kind) in [
+            ("UserPromptSubmit", NoticeKind::Working),
+            ("PermissionRequest", NoticeKind::Waiting),
+            ("PostToolUse", NoticeKind::Working),
+        ] {
+            a.handle_hook(&sid, hook, &serde_json::Value::Null);
+            let v = a.view();
+            assert_eq!((v.notice.kind, v.tip.is_some()), (kind, false), "{hook}");
+        }
+        a.handle_hook(&sid, "Stop", &serde_json::Value::Null);
+        a.tick();
+        let v = a.view();
+        assert_eq!(v.tip.is_some(), v.notice.kind == NoticeKind::Idle);
         a.handle_ctl(&["inbox".into()]);
         a.handle_ctl(&["inbox".into()]);
         assert!(a.st.used.contains("inbox"));
