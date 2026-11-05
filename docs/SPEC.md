@@ -31,17 +31,17 @@ A terminal UI that orchestrates multiple Claude Code sessions across projects, w
 
 ```
 ┌ pebl ─────────────────┬───────────────────────────────────────────────┐
-│ ▾ nova-api        │                                               │
+│ ▾ nova-api             │                                               │
 │   ● api-refactor       │   (live Claude Code session)                  │
 │   ◆ fix-login    !     │                                               │
-│ ▸ bui                  │                                               │
-│ ▾ billing-svc           │                                               │
+│ ▸ infra                │                                               │
+│ ▾ billing-svc          │                                               │
 │   ○ main               │                                               │
 │                        │                                               │
 │ + new project          │                                               │
 │ + new session          │                                               │
 ├────────────────────────┴───────────────────────────────────────────────┤
-│ ^n new  ^j/^k switch  ^b sidebar  ^q quit   ~/code/nova-api  3/5  │
+│ ^n new  ^j/^k switch  ^b sidebar  ^q quit        ~/code/nova-api  3/5  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
