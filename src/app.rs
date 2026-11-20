@@ -1761,9 +1761,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             self.env.settings.display().to_string(),
         ];
         argv.extend(self.memory_args(&s.project));
-        if !self.env.profiles.is_empty() {
-            argv.extend(["--plugin-dir".into(), self.env.plugin.display().to_string()]);
-        }
+        argv.extend(["--plugin-dir".into(), self.env.plugin.display().to_string()]);
         if resume {
             argv.extend(["--resume".into(), s.claude_id.clone()]);
         } else {
@@ -4605,7 +4603,9 @@ mod tests {
         assert_eq!(a.st.sessions.len(), 1);
         let log = a.be.log.borrow().join("\n");
         assert!(
-            log.contains("spawn s2 claude --settings /s.json --session-id"),
+            log.contains(
+                "spawn s2 claude --settings /s.json --plugin-dir /pebl-plugin --session-id"
+            ),
             "{log}"
         );
         assert!(log.contains("show %11 over %2"), "{log}");
@@ -5081,7 +5081,7 @@ mod tests {
         let log = a.be.log.borrow().join("\n");
         assert!(
             log.contains(&format!(
-                "claude --settings /s.json --append-system-prompt-file {} --session-id",
+                "claude --settings /s.json --append-system-prompt-file {} --plugin-dir /pebl-plugin --session-id",
                 file.display()
             )),
             "{log}"
