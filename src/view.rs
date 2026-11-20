@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct View {
+    #[serde(skip)]
+    pub side_scroll: Option<usize>,
     pub projects: Vec<ProjectRow>,
     pub cursor: Option<Cursor>,
     pub active: Option<Active>,
@@ -119,6 +121,8 @@ pub struct Notice {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProjectRow {
     pub name: String,
+    #[serde(default)]
+    pub profile: Option<String>,
     pub open: bool,
     pub total: usize,
     pub waiting: usize,
@@ -159,6 +163,8 @@ pub struct Active {
     pub session: String,
     pub status: Status,
     pub age: String,
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +249,7 @@ pub enum Mode {
     NewProject(NewProject),
     ConfirmKill {
         name: String,
+        running: Option<usize>,
     },
     Filter {
         text: String,
@@ -484,6 +491,8 @@ pub enum Stage {
     Welcome {
         dir: String,
         history: Vec<(String, usize)>,
+        #[serde(default)]
+        accounts: usize,
     },
     NewSession {
         cwd: String,

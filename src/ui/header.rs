@@ -154,11 +154,15 @@ fn main_header(v: &View) -> (Vec<Seg>, Vec<Seg>) {
     let Some(a) = &v.active else {
         return (Vec::new(), tally(v));
     };
-    let left = vec![
+    let mut left = vec![
         seg(a.project.clone(), Tok::Mute),
         seg(" / ", Tok::Dim),
         segb(a.session.clone(), Tok::Fg),
     ];
+    if let Some(acc) = &a.account {
+        left.push(seg("  ", Tok::Dim));
+        left.push(seg(acc.clone(), Tok::Dim));
+    }
     if matches!(v.layout, Layout::Hidden { .. }) {
         return (left, tally(v));
     }

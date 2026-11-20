@@ -74,6 +74,18 @@ impl Tok {
         }
     }
 
+    pub fn ansi(self, text: &str, bold: bool, mode: ColorMode) -> String {
+        let colour = match mode {
+            ColorMode::Truecolor => {
+                let (r, g, b) = self.rgb();
+                format!("38;2;{r};{g};{b}")
+            }
+            ColorMode::Indexed => format!("38;5;{}", self.idx()),
+        };
+        let weight = if bold { "1;" } else { "" };
+        format!("\x1b[{weight}{colour}m{text}\x1b[0m")
+    }
+
     pub fn tmux(self, mode: ColorMode) -> String {
         match mode {
             ColorMode::Truecolor => {

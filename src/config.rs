@@ -15,6 +15,8 @@ pub struct Config {
     pub update_check: Option<bool>,
     pub telemetry: Option<bool>,
     pub checks: Option<bool>,
+    pub profiles: std::collections::BTreeMap<String, String>,
+    pub profile: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -4,7 +4,11 @@ use crate::view::{Mode, Stage, View};
 
 pub fn render(v: &View, p: &mut Painter) {
     match &v.stage {
-        Stage::Welcome { dir, history } => welcome(p, dir, history),
+        Stage::Welcome {
+            dir,
+            history,
+            accounts,
+        } => welcome(p, dir, history, *accounts),
         Stage::NewSession { cwd } => new_session(v, p, cwd),
         Stage::Help => help(p),
         Stage::Exited { name, code } => exited(p, name, *code),
@@ -12,7 +16,7 @@ pub fn render(v: &View, p: &mut Painter) {
     }
 }
 
-fn welcome(p: &mut Painter, dir: &str, history: &[(String, usize)]) {
+fn welcome(p: &mut Painter, dir: &str, history: &[(String, usize)], accounts: usize) {
     let x = 1;
     let bw = 62.min(p.w() - 2);
     p.boxed(x, 0, bw, 6, Tok::Acc, true);
@@ -53,6 +57,19 @@ fn welcome(p: &mut Painter, dir: &str, history: &[(String, usize)]) {
             seg("add a project by path", Tok::Mute),
         ],
         vec![seg("  ?        ", Tok::Fg), seg("all shortcuts", Tok::Mute)],
+        if accounts > 1 {
+            vec![
+                seg("  ✓        ", Tok::Acc),
+                seg(format!("{accounts} Claude accounts: "), Tok::Mute),
+                seg("pebl profile in a terminal sets them up", Tok::Dim),
+            ]
+        } else {
+            vec![
+                seg("  ·        ", Tok::Dim),
+                seg("more than one Claude account? ", Tok::Mute),
+                seg("pebl login", Tok::Dim),
+            ]
+        },
     ];
     if !history.is_empty() {
         rows.push(vec![]);
@@ -165,9 +182,12 @@ pub fn help_text() -> String {
             std::iter::once(format!("{title}:"))
                 .chain(rows.iter().map(|(k, d)| format!("  {k}: {d}")))
         })
+        .chain([ACCOUNTS.to_string()])
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+const ACCOUNTS: &str = "two Claude accounts (work and personal): accounts are set up outside the pebl screen, in a plain terminal. `pebl login` adds an account and logs in to it. `pebl profile` opens a small menu: add an account, pick the one new sessions use, give a project its own account, or remove one. pebl applies the change itself. Running sessions keep the account they started with; the header shows a session's account. Typing /switch in Claude's own input (shown as /pebl:switch) moves that session to another account: with two it flips, with more /switch lists them and /switch work picks one; pebl restarts it there with the same conversation, without sending anything to Claude.";
 
 const HELP: &[(&str, &[(&str, &str)])] = &[
     (

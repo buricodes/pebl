@@ -272,12 +272,23 @@ pub fn summon(terminal: Option<&str>) -> Result<()> {
     let app = terminal
         .map(str::to_string)
         .unwrap_or_else(default_terminal);
-    let ttys = Tmux::new(paths::tmux_socket()).client_ttys();
+    let tmux = Tmux::new(paths::tmux_socket());
+    let ttys = tmux.client_ttys();
     if app == "Terminal" && !ttys.is_empty() && focus_terminal_tab(&ttys) {
         return Ok(());
     }
     if app == "iTerm" && !ttys.is_empty() && focus_iterm_session(&ttys) {
         return Ok(());
+    }
+    if let Some(bundle) = tmux.client_pids().into_iter().find_map(app_bundle_of) {
+        let ok = Command::new("open")
+            .arg("-a")
+            .arg(&bundle)
+            .status()
+            .is_ok_and(|s| s.success());
+        if ok {
+            return Ok(());
+        }
     }
     open_new(&app)
 }
@@ -372,6 +383,21 @@ fn front_app() -> Option<(String, u32)> {
     Some((field("CFBundleIdentifier")?, field("pid")?.parse().ok()?))
 }
 
+fn app_bundle_of(pid: u32) -> Option<PathBuf> {
+    ancestors(pid).into_iter().find_map(|p| {
+        let out = Command::new("ps")
+            .args(["-o", "comm=", "-p", &p.to_string()])
+            .output()
+            .ok()?;
+        bundle_from_exe(String::from_utf8_lossy(&out.stdout).trim())
+    })
+}
+
+fn bundle_from_exe(exe: &str) -> Option<PathBuf> {
+    let at = exe.find(".app/Contents/MacOS/")?;
+    Some(PathBuf::from(&exe[..at + 4]))
+}
+
 fn ancestors(mut pid: u32) -> Vec<u32> {
     let mut chain = Vec::new();
     while pid > 1 && chain.len() < 32 {
@@ -460,5 +486,15 @@ mod tests {
         assert!(!valid_trigger("p"));
         assert!(!valid_trigger("cmd+shift"));
         assert!(!valid_trigger("cmd+p+q"));
+    }
+
+    #[test]
+    fn finds_the_app_bundle_running_a_process() {
+        assert_eq!(
+            bundle_from_exe("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"),
+            Some(PathBuf::from("/System/Applications/Utilities/Terminal.app"))
+        );
+        assert_eq!(bundle_from_exe("/opt/homebrew/bin/tmux"), None);
+        assert_eq!(bundle_from_exe("-zsh"), None);
     }
 }

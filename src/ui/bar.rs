@@ -1396,13 +1396,20 @@ pub fn status(v: &View) -> (Vec<Seg>, Vec<Seg>) {
             ("d", "discard"),
             ("esc", "cancel"),
         ]),
-        Mode::ConfirmKill { name } => {
+        Mode::ConfirmKill { name, running } => {
+            let (verb, tail) = match running {
+                None => ("Kill ", "?".to_string()),
+                Some(0) => ("Remove ", " from pebl? Files stay on disk.".to_string()),
+                Some(1) => ("Remove ", " and stop its running session?".to_string()),
+                Some(n) => ("Remove ", format!(" and stop its {n} running sessions?")),
+            };
+            let yes = if running.is_some() { "remove" } else { "kill" };
             let mut l = vec![
-                seg(" Kill ", Tok::Fg),
+                seg(format!(" {verb}"), Tok::Fg),
                 segb(name.clone(), Tok::Fg),
-                seg("?   ", Tok::Fg),
+                seg(format!("{tail}   "), Tok::Fg),
             ];
-            l.extend(keys(&[("y", "kill"), ("n", "keep")]).into_iter().skip(1));
+            l.extend(keys(&[("y", yes), ("n", "keep")]).into_iter().skip(1));
             l
         }
         Mode::Filter { text } => vec![seg(" / ", Tok::Acc), seg(text.clone(), Tok::Fg)],

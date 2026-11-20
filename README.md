@@ -275,6 +275,30 @@ pebl chime                   # hear the notification sounds
 pebl kill --yes              # stop pebl and every session it runs
 ```
 
+### Work and personal accounts
+
+Claude Code keeps each login in its own folder, so pebl can run sessions on different Claude accounts side by side. Accounts are set up in a plain terminal, not inside pebl. The first time you run `pebl`, it asks whether you use more than one account. Later on:
+
+```sh
+pebl login      # add another account; Claude Code opens so you can log in
+pebl profile    # a small menu: add an account, pick the one new sessions use,
+                # give a project its own account, log in again or remove one
+```
+
+```
+Claude accounts
+  1  default   me@home.dev   ~/.claude
+  2  work      me@work.dev   ~/.claude-work  ● new sessions use this
+
+  a  add an account              d  pick the account new sessions use
+  p  give a project its account  l  log in to an account again
+  r  remove an account           q  done
+```
+
+pebl applies the changes when you leave the menu.
+
+To move a running session to another account, type `/switch` in Claude's own input (it shows as `/pebl:switch`). With two accounts it flips to the other one; with more, `/switch` lists them and `/switch work` (a name, email or number) picks one. pebl restarts the session on that account with the same conversation, and nothing is sent to Claude. Running sessions keep the account they started with, the header shows a session's account, and search covers every account's history.
+
 ## Summon from anywhere (macOS)
 
 ```sh
@@ -289,6 +313,8 @@ A double-tap (or the combo) brings the terminal window running pebl to the front
 The agent only listens; it can't block or change keystrokes. That's why `--trigger space` is not the default: both spaces still get typed into whatever app you're in, and a fast double space while typing will fire it.
 
 Set `terminal = "iTerm"` (or `"Ghostty"`) in `~/.pebl/config.toml` to choose which app opens.
+
+Desktop notifications come from a small helper app pebl builds on first launch (`~/.pebl/bin/pebl-notify.app`, needs the Xcode command line tools). macOS asks once whether pebl may send notifications. Clicking one brings pebl to the front on that session. Without the helper pebl falls back to plain AppleScript notifications, which can't open a session. `pebl doctor` shows which you have.
 
 ## Usage and context
 
@@ -328,7 +354,7 @@ editor = "Visual Studio Code" # what `e` opens: an app name, or a command like "
 # background = "#141413" # paint pebl in the design's near-black instead of your terminal's colour
 
 [notify]
-desktop = true        # macOS notification when a session needs you, errors or finishes, unless pebl is the window you're looking at
+desktop = true        # macOS notification when a session needs you, errors or finishes, unless pebl is the window you're looking at; click it to open that session
 bell = false          # terminal bell; true, false, or a list of events: ["waiting", "error", "done"] (on Linux the default is ["waiting"])
 osc = false           # notification sent through the terminal (Ghostty, iTerm2, Kitty, WezTerm); same values
 chime = true          # play a sound for sessions you're not looking at, even when Terminal is in front

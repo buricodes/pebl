@@ -148,8 +148,20 @@ fn fit_rows(v: &View, rows: &[Row], w: i32, h: i32) -> Fit {
             _ => false,
         })
         .unwrap_or(0);
-    let scroll = (focus_row + 2).saturating_sub(room);
+    let most = rows.len().saturating_sub(room);
+    let follow = (focus_row + 2).saturating_sub(room).min(most);
+    let scroll = match v.side_scroll.map(|s| s.min(most)) {
+        Some(s) if v.cursor.is_none() || (focus_row >= s && focus_row < s + room) => s,
+        _ => follow,
+    };
     Fit { pet, room, scroll }
+}
+
+pub fn scrolled(v: &View, w: u16, h: u16, by: i32) -> usize {
+    let rows = rows(v);
+    let f = fit_rows(v, &rows, w as i32, h as i32);
+    let most = rows.len().saturating_sub(f.room);
+    (f.scroll as i64 + by as i64).clamp(0, most as i64) as usize
 }
 
 pub fn list_row(v: &View, w: u16, h: u16, y: u16) -> Option<u16> {
@@ -194,12 +206,22 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
                     if sel { Tok::Acc } else { Tok::Mute },
                     sel,
                 );
-                p.t(3, y, &fit(&pr.name, (w - 9).max(1) as usize), Tok::Fg, true);
-                if pr.waiting > 0 {
-                    p.rt(w - 1, y, &format!("◆ {}", pr.waiting), Tok::Acc, true);
+                let (count, tok) = if pr.waiting > 0 {
+                    (format!("◆ {}", pr.waiting), Tok::Acc)
                 } else {
-                    p.rt(w - 1, y, &pr.total.to_string(), Tok::Dim, false);
+                    (pr.total.to_string(), Tok::Dim)
+                };
+                let used = count.chars().count() as i32;
+                let tag = pr
+                    .profile
+                    .as_deref()
+                    .filter(|t| w - 9 - t.chars().count() as i32 >= 6);
+                let room = w - 9 - tag.map_or(0, |t| t.chars().count() as i32 + 1);
+                p.t(3, y, &fit(&pr.name, room.max(1) as usize), Tok::Fg, true);
+                if let Some(t) = tag {
+                    p.rt(w - 2 - used, y, t, Tok::Mute, false);
                 }
+                p.rt(w - 1, y, &count, tok, pr.waiting > 0);
             }
             Row::Session(pi, si) => {
                 let s = &v.projects[pi].sessions[si];
@@ -294,10 +316,10 @@ pub fn render(v: &View, p: &mut Painter, frame: u64) {
                 p.bg(0, y, w, Tok::Sel);
                 p.t(1, y, "›", Tok::Acc, true);
                 p.t(3, y, "+", Tok::Acc, true);
-                let editing_name = !matches!(
+                let editing_name = matches!(
                     &v.mode,
                     Mode::NewSession {
-                        editing_prompt: true,
+                        editing_prompt: false,
                         ..
                     }
                 );

@@ -30,7 +30,9 @@ pub fn deliver(batch: Vec<Outgoing>, cfg: &Notify) {
                 if n.channel == Channel::Phone {
                     phone(&cfg.phone, &n);
                 } else {
-                    desktop(&n);
+                    if !crate::notifier::post(&n.title, &n.body, &n.sid, &crate::self_exe()) {
+                        desktop(&n);
+                    }
                 }
             }
         }

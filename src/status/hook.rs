@@ -55,13 +55,53 @@ pub fn statusline() {
     }
 }
 
+fn switch(arg: &str) -> Result<crate::profile::Account, String> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let list = crate::profile::accounts(&crate::profile::load(), &home);
+    let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from);
+    let current = crate::profile::current_of(&list, dir.as_deref());
+    crate::profile::switch_target(&list, &current, arg)
+}
+
+fn block(reason: String) {
+    let out = serde_json::json!({
+        "decision": "block",
+        "reason": reason,
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "suppressOriginalPrompt": true,
+        },
+    });
+    print!("{out}");
+    let _ = std::io::stdout().flush();
+}
+
 pub fn run(event: &str) {
     let mut input = String::new();
     let _ = std::io::stdin().take(1 << 20).read_to_string(&mut input);
     let Ok(sid) = std::env::var("PEBL_SESSION_ID") else {
         return;
     };
-    let payload = serde_json::from_str(&input).unwrap_or(serde_json::Value::Null);
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&input).unwrap_or(serde_json::Value::Null);
+    if event == "UserPromptSubmit" {
+        let arg = payload
+            .get("prompt")
+            .and_then(|p| p.as_str())
+            .and_then(crate::profile::switch_arg)
+            .map(str::to_string);
+        if let Some(arg) = arg {
+            let target = switch(&arg);
+            block(match &target {
+                Ok(a) => format!("Switching this session to {}…", a.label()),
+                Err(e) => e.clone(),
+            });
+            let Ok(a) = target else {
+                return;
+            };
+            payload["pebl_switch"] = serde_json::Value::String(a.name);
+        }
+    }
     let msg = Hello::Hook {
         sid,
         event: event.to_string(),

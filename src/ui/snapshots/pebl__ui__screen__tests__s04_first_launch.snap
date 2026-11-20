@@ -16,13 +16,13 @@ expression: "snap(&v, 120, 40, Main::Stage)"
                               │   enter    add this directory     ~/code/nova-api
                               │   ctrl+o   add a project by path
                               │   ?        all shortcuts
+                              │   ·        more than one Claude account? pebl login
                               │
                               │
                               │   Found Claude Code history in 2 folders
                               │     ~/code/nova-api       12 sessions
                               │     ~/code/billing-svc    4 sessions
                               │   press i to import both
-                              │
                               │
                               │
                               │

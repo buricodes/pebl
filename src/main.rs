@@ -14,9 +14,13 @@ mod ipc;
 mod jel;
 mod memory;
 mod model;
+mod notifier;
 mod notify;
 mod paths;
 mod popup;
+use std::io::IsTerminal;
+mod profile;
+mod profile_menu;
 mod project;
 mod prompts;
 mod queue;
@@ -89,6 +93,15 @@ enum Cmd {
     Doctor,
     #[command(about = "Bring pebl to the front, or open it in a new terminal window")]
     Summon,
+    #[command(about = "Add another Claude account (work, personal, ...) and log in to it")]
+    Login,
+    #[command(
+        about = "Set up your Claude accounts: add one, pick the one new sessions use, give a project its own"
+    )]
+    Profile {
+        #[command(subcommand)]
+        action: Option<ProfileCmd>,
+    },
     #[command(about = "Global shortcut that summons pebl (macOS)")]
     Hotkey {
         #[command(subcommand)]
@@ -154,6 +167,36 @@ enum Cmd {
     View { role: String },
     #[command(hide = true)]
     Ctl { args: Vec<String> },
+}
+
+#[derive(Subcommand)]
+enum ProfileCmd {
+    #[command(about = "List your accounts and the one this folder uses")]
+    Ls,
+    #[command(about = "Add a Claude Code account and log in to it")]
+    Add {
+        name: String,
+        #[arg(
+            long,
+            help = "Where Claude Code keeps this account (default: ~/.claude-<name>)"
+        )]
+        dir: Option<String>,
+        #[arg(long, help = "Don't open Claude Code to log in now")]
+        no_login: bool,
+    },
+    #[command(about = "Stop offering an account (its folder is kept)")]
+    Remove { name: String },
+    #[command(about = "Use a profile for every session in a project")]
+    Use {
+        name: String,
+        #[arg(help = "Project folder (default: the current folder)")]
+        path: Option<std::path::PathBuf>,
+    },
+    #[command(about = "Go back to the default account for a project")]
+    Clear {
+        #[arg(help = "Project folder (default: the current folder)")]
+        path: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -358,7 +401,54 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Some(Cmd::Doctor) => doctor(),
+        Some(Cmd::Login) => {
+            if accounts(profile_menu::add)?.0 {
+                reload()?;
+            }
+            Ok(())
+        }
         Some(Cmd::Summon) => hotkey::summon(config::load(&paths::config())?.terminal.as_deref()),
+        Some(Cmd::Profile { action }) => {
+            let here = |p: Option<std::path::PathBuf>| match p {
+                Some(p) => Ok(p),
+                None => std::env::current_dir(),
+            };
+            let Some(action) = action else {
+                if std::io::stdin().is_terminal() {
+                    let (changed, start) = accounts(profile_menu::menu)?;
+                    if start {
+                        if changed && daemon_up() {
+                            reload()?;
+                        }
+                        return open();
+                    }
+                    if changed {
+                        reload()?;
+                    }
+                } else {
+                    accounts(profile_menu::list)?;
+                }
+                return Ok(());
+            };
+            match action {
+                ProfileCmd::Ls => {
+                    accounts(profile_menu::list)?;
+                }
+                ProfileCmd::Add {
+                    name,
+                    dir,
+                    no_login,
+                } => profile::add(&name, dir.as_deref(), !no_login)?,
+                ProfileCmd::Remove { name } => {
+                    let dir = profile::remove(&paths::config(), &name)?;
+                    println!("Removed {name}. Its login and history stay in {dir}; delete that folder to get rid of them.");
+                    reload()?;
+                }
+                ProfileCmd::Use { name, path } => profile::use_for(Some(&name), &here(path)?)?,
+                ProfileCmd::Clear { path } => profile::use_for(None, &here(path)?)?,
+            }
+            Ok(())
+        }
         Some(Cmd::Hotkey { action }) => match action {
             HotkeyCmd::Install { trigger } => {
                 hotkey::install(&trigger)?;
@@ -742,8 +832,58 @@ fn preflight() -> Result<()> {
     std::process::exit(1);
 }
 
+fn daemon_up() -> bool {
+    ipc::ctl(&paths::sock(), &["ls".into()]).is_ok()
+}
+
+fn accounts(f: fn(&mut profile_menu::Ctx) -> Result<bool>) -> Result<(bool, bool)> {
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let login = |dir: &std::path::Path, email: Option<&str>| {
+        let mut claude = std::process::Command::new("claude");
+        claude.args(["auth", "login"]);
+        if let Some(e) = email {
+            claude.args(["--email", e]);
+        }
+        if Some(dir) != profile::default_dir().as_deref() {
+            claude.env("CLAUDE_CONFIG_DIR", dir);
+        } else {
+            claude.env_remove("CLAUDE_CONFIG_DIR");
+        }
+        if !claude.status().is_ok_and(|s| s.success()) {
+            println!(
+                "\nThe sign-in didn't finish. Check that `claude` is installed, then try again."
+            );
+        }
+    };
+    let projects = store::load(&paths::state())
+        .map(|st| st.projects.into_iter().map(|p| p.path).collect())
+        .unwrap_or_default();
+    let mut ctx = profile_menu::Ctx {
+        config: paths::config(),
+        home: dirs::home_dir().context("no home folder")?,
+        here: std::env::current_dir()?,
+        projects,
+        input: &mut input,
+        login: &login,
+        start: false,
+    };
+    let changed = f(&mut ctx)?;
+    Ok((changed, ctx.start))
+}
+
+fn first_launch() -> bool {
+    !paths::state().exists()
+        && profile::load().is_empty()
+        && std::io::stdin().is_terminal()
+        && ipc::ctl(&paths::sock(), &["ls".into()]).is_err()
+}
+
 fn open() -> Result<()> {
     preflight()?;
+    if first_launch() {
+        accounts(|ctx| profile_menu::onboarding(ctx).map(|_| false))?;
+    }
     let t = ensure_daemon()?;
     let (w, h) = crossterm::terminal::size().unwrap_or((120, 40));
     let cwd = std::env::current_dir()?.display().to_string();
@@ -847,6 +987,14 @@ fn doctor() -> Result<()> {
         println!("  · hooks  written on first launch");
     }
     println!("  · hotkey  {}", hotkey::status());
+    println!("  · notifications  {}", notifier::status());
+    let profiles = profile::load();
+    if profiles.is_empty() {
+        println!("  · accounts  one (~/.claude); `pebl login` adds another");
+    } else {
+        let names: Vec<&str> = profiles.keys().map(String::as_str).collect();
+        println!("  · accounts  profiles {}", names.join(", "));
+    }
     if std::env::var("TERM_PROGRAM").as_deref() == Ok("Apple_Terminal") {
         println!("  · new line  Terminal.app sends shift+enter as plain enter: type \\ then enter, or option+enter with Option as Meta on");
     } else {
@@ -891,6 +1039,7 @@ fn preview(width: u16, height: u16) -> Result<()> {
     };
     let projects = vec![
         ProjectRow {
+            profile: None,
             name: "nova-api".into(),
             open: true,
             total: 3,
@@ -902,6 +1051,7 @@ fn preview(width: u16, height: u16) -> Result<()> {
             ],
         },
         ProjectRow {
+            profile: None,
             name: "billing-svc".into(),
             open: true,
             total: 3,
@@ -913,6 +1063,7 @@ fn preview(width: u16, height: u16) -> Result<()> {
             ],
         },
         ProjectRow {
+            profile: None,
             name: "infra".into(),
             open: false,
             total: 3,
@@ -928,6 +1079,7 @@ fn preview(width: u16, height: u16) -> Result<()> {
             session: "auth-refactor".into(),
             status: Running,
             age: "2m".into(),
+            account: None,
         }),
         focus: Focus::Main,
         layout: Layout::for_width(width, false),

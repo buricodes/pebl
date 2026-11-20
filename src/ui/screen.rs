@@ -120,6 +120,7 @@ pub mod fixtures {
         rows.into_iter()
             .map(|(n, open, ss)| ProjectRow {
                 name: n.into(),
+                profile: None,
                 open,
                 total: ss.len(),
                 waiting: ss.iter().filter(|x| x.status == Waiting).count(),
@@ -137,6 +138,7 @@ pub mod fixtures {
                 session: "auth-refactor".into(),
                 status: Running,
                 age: "2m".into(),
+                account: None,
             }),
             focus: Focus::Main,
             layout: Layout::Full(30),
@@ -197,6 +199,67 @@ mod tests {
     }
 
     #[test]
+    fn a_project_row_shows_its_profile_unless_the_sidebar_is_too_narrow() {
+        let mut v = base();
+        v.projects[0].profile = Some("work".into());
+        let draw = |w: u16| {
+            let area = Rect::new(0, 0, w, 12);
+            let mut buf = Buffer::empty(area);
+            sidebar::render(&v, &mut Painter::new(&mut buf, area, v.color), 1);
+            let text = to_text(&buf);
+            text.lines()
+                .find(|l| l.contains("nova"))
+                .unwrap_or_default()
+                .to_string()
+        };
+        let wide = draw(30);
+        assert!(wide.contains("nova-api") && wide.contains("work"), "{wide}");
+        let narrow = draw(16);
+        assert!(!narrow.contains("work"), "{narrow}");
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_sidebar_and_clicks_follow_it() {
+        let mut v = base();
+        v.cursor = Some(Cursor::Project(0));
+        let (w, h) = (30u16, 12u16);
+        let draw = |v: &View| {
+            let area = Rect::new(0, 0, w, h);
+            let mut buf = Buffer::empty(area);
+            sidebar::render(v, &mut Painter::new(&mut buf, area, v.color), 1);
+            to_text(&buf)
+        };
+        assert!(draw(&v)
+            .lines()
+            .nth(1)
+            .unwrap_or_default()
+            .contains("nova-api"));
+        v.cursor = None;
+        v.side_scroll = Some(sidebar::scrolled(&v, w, h, 3));
+        assert_eq!(v.side_scroll, Some(3));
+        let text = draw(&v);
+        assert!(
+            !text.lines().nth(1).unwrap_or_default().contains("nova-api"),
+            "{text}"
+        );
+        let far = sidebar::scrolled(&v, w, h, 999);
+        assert_eq!(sidebar::scrolled(&v, w, h, -999), 0);
+        v.side_scroll = Some(far);
+        let text = draw(&v);
+        let lines: Vec<&str> = text.lines().collect();
+        for y in 0..h {
+            if let Some(Cursor::Project(pi)) =
+                sidebar::list_row(&v, w, h, y).and_then(|r| sidebar::hit(&v, r))
+            {
+                assert!(
+                    lines[y as usize].contains(&v.projects[pi].name[..4]),
+                    "{text}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn clicks_land_on_the_row_drawn_when_the_list_scrolls() {
         let mut v = base();
         v.cursor = Some(Cursor::Session(1, 2));
@@ -241,6 +304,7 @@ mod tests {
             session: "migrate-staging".into(),
             status: Status::Waiting,
             age: "3m".into(),
+            account: None,
         });
         v.counts = Counts {
             running: 3,
@@ -264,6 +328,7 @@ mod tests {
     fn s04_first_launch() {
         let v = View {
             stage: Stage::Welcome {
+                accounts: 1,
                 dir: "~/code/nova-api".into(),
                 history: vec![
                     ("~/code/nova-api".into(), 12),
@@ -551,6 +616,7 @@ mod tests {
             session: "onboarding-flow".into(),
             status: Status::Running,
             age: "14s".into(),
+            account: None,
         });
         v.usage = Some(Usage {
             model: "Sonnet".into(),

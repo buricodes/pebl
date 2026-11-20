@@ -31,12 +31,23 @@ pub fn run() -> Result<()> {
 
     let pebl = crate::self_exe();
     write_claude_settings(&pebl)?;
+    crate::app::write_plugin(&paths::claude_plugin())?;
+    std::thread::spawn(|| {
+        if let Err(e) = crate::notifier::ensure() {
+            crate::daemon::log(&format!("notifier: {e:#}"));
+        }
+    });
     let cfg = crate::config::load(&paths::config()).unwrap_or_default();
+    let profiles = crate::profile::from_config(&cfg.profiles);
     let env = Env {
+        profiles: profiles.clone(),
+        home: dirs::home_dir().unwrap_or_default(),
+        profile: cfg.profile.clone(),
         notify: cfg.notify.clone(),
         pebl: pebl.clone(),
         claude: find_in_path("claude").unwrap_or_else(|| "claude".into()),
         settings: paths::claude_settings(),
+        plugin: paths::claude_plugin(),
         prompts: paths::prompts(),
         memory: paths::memory(),
         reviews: paths::reviews(),
@@ -86,7 +97,7 @@ pub fn run() -> Result<()> {
         });
     }
     app.load_statuslines(&paths::statusline_dir());
-    app.search_root = crate::search::root();
+    app.search_roots = crate::search::roots(&profiles);
     app.start_index();
 
     let mut subs: Vec<(Role, UnixStream)> = Vec::new();

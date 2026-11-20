@@ -44,6 +44,10 @@ pub fn claude_settings() -> PathBuf {
     home().join("claude-settings.json")
 }
 
+pub fn claude_plugin() -> PathBuf {
+    home().join("claude-plugin")
+}
+
 pub fn tmux_conf() -> PathBuf {
     home().join("tmux.conf")
 }

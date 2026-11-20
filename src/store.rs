@@ -121,6 +121,7 @@ mod tests {
             exit_code: None,
             auto_name: false,
             reviews: None,
+            profile: None,
         }
     }
 

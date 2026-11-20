@@ -46,6 +46,8 @@ pub struct Session {
     pub auto_name: bool,
     #[serde(default)]
     pub reviews: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

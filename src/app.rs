@@ -3,6 +3,8 @@ mod attention;
 mod auto_checks;
 mod hints;
 mod notes;
+mod switch_account;
+pub use switch_account::write_plugin;
 mod recipe_runner;
 mod replay;
 mod reviewer;
@@ -25,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const FLASH_FOR: Duration = Duration::from_secs(4);
+const OPEN_ON_LAUNCH: Duration = Duration::from_secs(30);
 const CANDIDATES: usize = 4;
 const DONE_FOR: u64 = 15 * 60;
 pub const MAX_COLS: usize = 4;
@@ -152,6 +155,7 @@ pub struct Env {
     pub pebl: String,
     pub claude: String,
     pub settings: PathBuf,
+    pub plugin: PathBuf,
     pub sock: PathBuf,
     pub editor: String,
     pub prompts: PathBuf,
@@ -163,6 +167,9 @@ pub struct Env {
     pub clipboard: fn() -> Option<String>,
     pub ask: fn(&str, &str, &str) -> Result<String>,
     pub notify: crate::config::Notify,
+    pub profiles: crate::profile::Profiles,
+    pub home: PathBuf,
+    pub profile: Option<String>,
 }
 
 pub struct App<B: SessionBackend + UiBackend> {
@@ -210,7 +217,9 @@ pub struct App<B: SessionBackend + UiBackend> {
     indexing: std::sync::Arc<std::sync::atomic::AtomicBool>,
     found: Option<crate::search::Results>,
     queued: HashMap<String, Vec<String>>,
-    pub search_root: Option<PathBuf>,
+    pub search_roots: Vec<PathBuf>,
+    profile_of: HashMap<String, Option<String>>,
+    open_on_launch: Option<(String, Instant)>,
     shells: HashMap<String, Vec<String>>,
     shell_focus: Option<String>,
     drawer: HashSet<String>,
@@ -234,6 +243,7 @@ pub struct App<B: SessionBackend + UiBackend> {
     asked: Vec<ask_jel::Asked>,
     ask_seq: u64,
     answers: ask_jel::Answers,
+    switching: Vec<(String, String, Instant)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -264,6 +274,7 @@ pub enum Channel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Outgoing {
+    pub sid: String,
     pub title: String,
     pub body: String,
     pub channel: Channel,
@@ -317,7 +328,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             indexing: Default::default(),
             found: None,
             queued: HashMap::new(),
-            search_root: None,
+            search_roots: Vec::new(),
+            profile_of: HashMap::new(),
+            open_on_launch: None,
             shells: HashMap::new(),
             shell_focus: None,
             drawer: HashSet::new(),
@@ -341,6 +354,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             asked: Vec::new(),
             ask_seq: 0,
             answers: Default::default(),
+            switching: Vec::new(),
         };
         app.hooked = app.st.sessions.iter().map(|s| s.id.clone()).collect();
         if let Ok(list) = app.be.shells() {
@@ -433,6 +447,13 @@ impl<B: SessionBackend + UiBackend> App<B> {
             ["next"] => self.cycle(1).map(|_| String::new()),
             ["prev"] => self.cycle(-1).map(|_| String::new()),
             ["waiting"] => self.jump_waiting().map(|_| String::new()),
+            ["open", sid] => {
+                if self.st.session(sid).is_some() {
+                    self.open_attention(sid);
+                    self.open_on_launch = Some((sid.to_string(), Instant::now()));
+                }
+                Ok(String::new())
+            }
             ["ask"] => {
                 self.start_ask();
                 Ok(String::new())
@@ -679,7 +700,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .retain(|sid, _| ids.iter().any(|(s, _)| s == sid));
         for (sid, cid) in ids {
             if !self.tokens.contains_key(&sid) {
-                let Some(p) = history::transcript(&cid) else {
+                let Some(p) = self.transcript(&cid) else {
                     continue;
                 };
                 self.tokens
@@ -705,6 +726,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let Some(cur) = self.st.session(sid).map(|s| s.status) else {
             return;
         };
+        if let Some(account) = payload.get("pebl_switch").and_then(|a| a.as_str()) {
+            self.queue_switch(sid, account);
+            return;
+        }
         self.record_hook(sid, event, payload);
         match event {
             "PreToolUse" | "PermissionRequest" => {
@@ -763,12 +788,16 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     pub fn tick(&mut self) {
         self.ticks += 1;
+        self.switch_tick();
         if self
             .flash
             .as_ref()
             .is_some_and(|(_, t)| t.elapsed() > FLASH_FOR)
         {
             self.flash = None;
+        }
+        if self.ticks % 5 == 1 {
+            self.refresh_profiles();
         }
         if self.ticks.is_multiple_of(2) {
             self.refresh_panes();
@@ -831,6 +860,14 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     fn launched(&mut self, cwd: PathBuf) {
         self.launch_dir = cwd.clone();
+        if let Some((sid, _)) = self
+            .open_on_launch
+            .take()
+            .filter(|(sid, at)| at.elapsed() < OPEN_ON_LAUNCH && self.st.session(sid).is_some())
+        {
+            self.open_attention(&sid);
+            return;
+        }
         if self.st.projects.is_empty() {
             self.history = history::scan();
             self.set_focus(Focus::Main);
@@ -1286,6 +1323,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 };
                 if s.status == still {
                     out.extend(cfg.sound_for(p.kind).map(|sound| Outgoing {
+                        sid: p.sid.clone(),
                         title: sound,
                         body: String::new(),
                         channel: Channel::Chime,
@@ -1293,6 +1331,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                     }));
                     if cfg.desktop.on(p.kind) {
                         out.push(Outgoing {
+                            sid: p.sid.clone(),
                             title,
                             body,
                             channel: Channel::Desktop,
@@ -1316,6 +1355,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 p.rung = true;
                 if let Some(sound) = cfg.sound_for(p.kind) {
                     out.push(Outgoing {
+                        sid: p.sid.clone(),
                         title: sound,
                         body: String::new(),
                         channel: Channel::Chime,
@@ -1332,6 +1372,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             if cfg.desktop.on(p.kind) && !p.desktop {
                 p.desktop = true;
                 out.push(Outgoing {
+                    sid: p.sid.clone(),
                     title: title.clone(),
                     body: body.clone(),
                     channel: Channel::Desktop,
@@ -1344,6 +1385,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             if phone_due && !p.phone {
                 p.phone = true;
                 out.push(Outgoing {
+                    sid: p.sid.clone(),
                     title,
                     body,
                     channel: Channel::Phone,
@@ -1514,6 +1556,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         if self.st.projects.is_empty() {
             let history = self.history.iter().map(|(p, n)| (tilde(p), *n)).collect();
             return Some(Stage::Welcome {
+                accounts: crate::profile::count(&self.env.profiles, &self.env.home),
                 dir: tilde(&self.launch_dir),
                 history,
             });
@@ -1560,7 +1603,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .collect();
         for (sid, cid) in auto {
             if !self.titles.contains_key(&sid) {
-                match history::transcript(&cid) {
+                match self.transcript(&cid) {
                     Some(p) => {
                         self.titles.insert(sid.clone(), (p, 0));
                     }
@@ -1636,12 +1679,79 @@ impl<B: SessionBackend + UiBackend> App<B> {
             sid: s.id.clone(),
             cwd: s.cwd.clone(),
             argv,
-            env: vec![
+            env: [
                 ("PEBL_SESSION_ID".into(), s.id.clone()),
                 ("PEBL_SOCK".into(), self.env.sock.display().to_string()),
-            ],
+            ]
+            .into_iter()
+            .chain(
+                self.claude_config_dir(s)
+                    .map(|d| ("CLAUDE_CONFIG_DIR".into(), d.display().to_string())),
+            )
+            .collect(),
             size: self.main_size(),
         }
+    }
+
+    fn project_profile(&self, pid: &str) -> Option<String> {
+        if self.env.profiles.is_empty() {
+            return None;
+        }
+        crate::profile::of_project(&self.st.project(pid)?.path)
+    }
+
+    fn refresh_profiles(&mut self) {
+        self.profile_of = self
+            .st
+            .projects
+            .iter()
+            .map(|p| (p.id.clone(), self.project_profile(&p.id)))
+            .collect();
+    }
+
+    fn claude_config_dir(&self, s: &Session) -> Option<PathBuf> {
+        let name = match &s.profile {
+            Some(n) => n.clone(),
+            None => self.project_profile(&s.project)?,
+        };
+        crate::profile::config_dir(&self.env.profiles, &name)
+    }
+
+    fn account_label(&self, s: &Session) -> Option<String> {
+        if self.env.profiles.is_empty() {
+            return None;
+        }
+        let name = s
+            .profile
+            .clone()
+            .or_else(|| self.project_profile(&s.project))
+            .unwrap_or_else(|| crate::profile::DEFAULT.into());
+        let label = self
+            .accounts()
+            .into_iter()
+            .find(|a| a.name == name)
+            .map(|a| a.label())
+            .unwrap_or(name);
+        Some(label)
+    }
+
+    fn transcript(&self, claude_id: &str) -> Option<PathBuf> {
+        history::transcript_in(
+            &crate::profile::project_roots(&self.env.profiles),
+            claude_id,
+        )
+    }
+
+    fn current_account(&self) -> String {
+        self.env
+            .profile
+            .clone()
+            .filter(|n| self.env.profiles.contains_key(n))
+            .unwrap_or_else(|| crate::profile::DEFAULT.into())
+    }
+
+    fn accounts(&self) -> Vec<crate::profile::Account> {
+        crate::profile::accounts(&self.env.profiles, &self.env.home)
     }
 
     fn claude_argv(&self, s: &Session, prompt: &str, resume: bool) -> Vec<String> {
@@ -1651,6 +1761,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             self.env.settings.display().to_string(),
         ];
         argv.extend(self.memory_args(&s.project));
+        if !self.env.profiles.is_empty() {
+            argv.extend(["--plugin-dir".into(), self.env.plugin.display().to_string()]);
+        }
         if resume {
             argv.extend(["--resume".into(), s.claude_id.clone()]);
         } else {
@@ -1732,6 +1845,8 @@ impl<B: SessionBackend + UiBackend> App<B> {
             exit_code: None,
             auto_name,
             reviews: None,
+            profile: Some(self.current_account())
+                .filter(|n| n != crate::profile::DEFAULT && self.project_profile(pid).is_none()),
         };
         let mut argv = self.claude_argv(&s, prompt, false);
         if let Some(w) = &s.worktree {
@@ -1762,7 +1877,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             .session(sid)
             .cloned()
             .ok_or_else(|| anyhow!("no such session"))?;
-        let argv = self.claude_argv(&s, "", history::has_transcript(&s.claude_id));
+        let argv = self.claude_argv(&s, "", self.transcript(&s.claude_id).is_some());
         let spec = self.spec(&s, argv);
         let pane = match &s.pane {
             Some(p) => {
@@ -1822,12 +1937,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 }
             }
             CurRef::Project(pid) => {
-                if self
-                    .st
-                    .sessions_of(pid)
-                    .any(|s| s.pane.is_some() && !matches!(s.status, Status::Exited))
-                {
-                    bail!("kill its sessions first");
+                let sids: Vec<String> = self.st.sessions_of(pid).map(|s| s.id.clone()).collect();
+                for sid in sids {
+                    self.kill(&CurRef::Session(sid))?;
                 }
                 self.st.sessions.retain(|s| s.project != *pid);
                 self.st.projects.retain(|p| p.id != *pid);
@@ -2612,9 +2724,10 @@ impl<B: SessionBackend + UiBackend> App<B> {
 
     pub fn start_index(&self) {
         use std::sync::atomic::Ordering;
-        let Some(root) = self.search_root.clone() else {
+        if self.search_roots.is_empty() {
             return;
-        };
+        }
+        let roots = self.search_roots.clone();
         if self.indexing.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -2622,7 +2735,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         let flag = self.indexing.clone();
         let sock = self.env.sock.clone();
         std::thread::spawn(move || {
-            crate::search::refresh(&shared, &root);
+            crate::search::refresh(&shared, &roots);
             flag.store(false, Ordering::SeqCst);
             let _ = crate::ipc::ctl(&sock, &["search-ready".into()]);
         });
@@ -2746,6 +2859,9 @@ impl<B: SessionBackend + UiBackend> App<B> {
             None => self.st.add_project(cwd.clone(), None),
         };
         let sid = self.st.fresh_id("s");
+        let profile = self
+            .transcript(&hit.id)
+            .and_then(|p| crate::profile::holding(&self.env.profiles, &p));
         self.st.sessions.push(Session {
             id: sid.clone(),
             project: pid,
@@ -2759,6 +2875,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             exit_code: None,
             auto_name: false,
             reviews: None,
+            profile,
         });
         self.resume(&sid)?;
         self.sync_main();
@@ -3812,6 +3929,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
             }
             projects.push(ProjectRow {
                 name: p.name.clone(),
+                profile: self.profile_of.get(&p.id).cloned().flatten(),
                 open: p.open || self.filtering(),
                 total: all.len(),
                 waiting: all.iter().filter(|s| s.status == Status::Waiting).count(),
@@ -3844,6 +3962,15 @@ impl<B: SessionBackend + UiBackend> App<B> {
             },
             IMode::NewProject(np) => Mode::NewProject(np.clone()),
             IMode::ConfirmKill { target } => Mode::ConfirmKill {
+                running: match target {
+                    CurRef::Session(_) => None,
+                    CurRef::Project(p) => Some(
+                        self.st
+                            .sessions_of(p)
+                            .filter(|s| s.pane.is_some() && !matches!(s.status, Status::Exited))
+                            .count(),
+                    ),
+                },
                 name: match target {
                     CurRef::Session(s) => self
                         .st
@@ -3941,6 +4068,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
                 session: s.name.clone(),
                 status: s.status,
                 age: age(now().saturating_sub(s.since)),
+                account: self.account_label(s),
             });
         let path_of = |pid: &str| self.st.project(pid).map(|p| tilde(&p.path));
         let path = match &self.mode {
@@ -3952,6 +4080,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         }
         .unwrap_or_else(|| tilde(&self.launch_dir));
         View {
+            side_scroll: None,
             projects,
             cursor,
             active,
@@ -4247,6 +4376,9 @@ mod tests {
             self.log
                 .borrow_mut()
                 .push(format!("spawn {} {}", spec.sid, spec.argv.join(" ")));
+            for (k, v) in spec.env.iter().filter(|(k, _)| k == "CLAUDE_CONFIG_DIR") {
+                self.log.borrow_mut().push(format!("env {k}={v}"));
+            }
             self.panes.borrow_mut().push(LivePane {
                 id: id.clone(),
                 sid: Some(spec.sid.clone()),
@@ -4256,8 +4388,13 @@ mod tests {
             });
             Ok(id)
         }
-        fn respawn(&self, pane: &str, _: &SpawnSpec) -> Result<()> {
-            self.log.borrow_mut().push(format!("respawn {pane}"));
+        fn respawn(&self, pane: &str, spec: &SpawnSpec) -> Result<()> {
+            self.log
+                .borrow_mut()
+                .push(format!("respawn {pane} {}", spec.argv.join(" ")));
+            for (k, v) in spec.env.iter().filter(|(k, _)| k == "CLAUDE_CONFIG_DIR") {
+                self.log.borrow_mut().push(format!("env {k}={v}"));
+            }
             Ok(())
         }
         fn kill(&self, pane: &str) -> Result<()> {
@@ -4400,6 +4537,7 @@ mod tests {
             pebl: "pebl".into(),
             claude: "claude".into(),
             settings: "/s.json".into(),
+            plugin: "/pebl-plugin".into(),
             sock: "/x.sock".into(),
             editor: "true".into(),
             prompts: std::env::temp_dir().join(format!("pebl-test-prompts-{}", std::process::id())),
@@ -4422,6 +4560,9 @@ mod tests {
                 phone_after: 0,
                 ..Default::default()
             },
+            profiles: Default::default(),
+            home: std::env::temp_dir().join(format!("pebl-test-home-{}", std::process::id())),
+            profile: None,
         };
         let mut a = App::new(State::default(), Fake::default(), env);
         a.handle_ctl(
@@ -5715,6 +5856,156 @@ mod tests {
     }
 
     #[test]
+    fn a_project_profile_picks_the_claude_account_for_its_sessions() {
+        let (mut a, d) = app();
+        let work = d.path().join(".claude-work");
+        a.env.profiles = crate::profile::Profiles::from([("work".into(), work.clone())]);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "plain".into(), String::new()]);
+        assert!(!a.be.log.borrow().iter().any(|l| l.starts_with("env ")));
+        std::fs::write(d.path().join(crate::project::FILE), "profile = \"work\"\n").unwrap();
+        a.handle_ctl(&["new".into(), String::new(), "at-work".into(), String::new()]);
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!("env CLAUDE_CONFIG_DIR={}", work.display())),
+            "{log}"
+        );
+        a.tick();
+        assert_eq!(a.view().projects[0].profile.as_deref(), Some("work"));
+    }
+
+    fn with_accounts(a: &mut App<Fake>, d: &tempfile::TempDir) -> PathBuf {
+        let home = d.path().join("home");
+        let work = home.join(".claude-work");
+        std::fs::create_dir_all(&work).unwrap();
+        let login = |email: &str| format!("{{\"oauthAccount\":{{\"emailAddress\":\"{email}\"}}}}");
+        std::fs::write(home.join(".claude.json"), login("me@home.test")).unwrap();
+        std::fs::write(work.join(".claude.json"), login("me@work.test")).unwrap();
+        a.env.home = home.clone();
+        a.env.profiles = crate::profile::Profiles::from([("work".into(), work)]);
+        home
+    }
+
+    #[test]
+    fn the_default_account_from_the_config_is_used_for_new_sessions() {
+        let (mut a, d) = app();
+        let home = with_accounts(&mut a, &d);
+        a.env.profile = Some("work".into());
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new-session".into()]);
+        typ(&mut a, "api");
+        key(&mut a, Role::Sidebar, KeyCode::Enter);
+        let s = a.st.sessions.last().unwrap().clone();
+        assert_eq!(s.profile.as_deref(), Some("work"));
+        let log = a.be.log.borrow().join("\n");
+        assert!(
+            log.contains(&format!(
+                "env CLAUDE_CONFIG_DIR={}",
+                home.join(".claude-work").display()
+            )),
+            "{log}"
+        );
+        assert_eq!(
+            a.view().active.unwrap().account.as_deref(),
+            Some("me@work.test")
+        );
+    }
+
+    #[test]
+    fn slash_switch_restarts_the_session_on_the_other_account_with_its_conversation() {
+        let (mut a, d) = app();
+        let home = with_accounts(&mut a, &d);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "api".into(), String::new()]);
+        let s = a.st.sessions[0].clone();
+        assert!(a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.contains("--plugin-dir /pebl-plugin")));
+        let folder = home.join(".claude/projects/-tmp-api");
+        std::fs::create_dir_all(folder.join(&s.claude_id)).unwrap();
+        std::fs::write(folder.join(format!("{}.jsonl", s.claude_id)), "{}\n").unwrap();
+        std::fs::write(folder.join(&s.claude_id).join("tool.txt"), "x").unwrap();
+
+        let p = serde_json::json!({"prompt": "/switch", "pebl_switch": "work"});
+        a.handle_hook(&s.id, "UserPromptSubmit", &p);
+        assert_eq!(a.st.sessions[0].status, Status::Idle);
+        a.switching[0].2 -= Duration::from_secs(1);
+        a.be.log.borrow_mut().clear();
+        a.tick();
+
+        let moved = home.join(".claude-work/projects/-tmp-api");
+        assert!(moved.join(format!("{}.jsonl", s.claude_id)).exists());
+        assert!(moved.join(&s.claude_id).join("tool.txt").exists());
+        assert_eq!(a.st.sessions[0].profile.as_deref(), Some("work"));
+        let log = a.be.log.borrow().join("\n");
+        assert!(log.contains("--resume"), "{log}");
+        assert!(
+            log.contains(&format!(
+                "env CLAUDE_CONFIG_DIR={}",
+                home.join(".claude-work").display()
+            )),
+            "{log}"
+        );
+        assert!(a.view().flash.unwrap_or_default().contains("me@work.test"));
+
+        a.handle_hook(
+            &s.id,
+            "UserPromptSubmit",
+            &serde_json::json!({"pebl_switch": "default"}),
+        );
+        a.switching[0].2 -= Duration::from_secs(1);
+        a.be.log.borrow_mut().clear();
+        a.tick();
+        assert_eq!(a.st.sessions[0].profile.as_deref(), Some("default"));
+        assert!(!a
+            .be
+            .log
+            .borrow()
+            .iter()
+            .any(|l| l.contains("CLAUDE_CONFIG_DIR")));
+    }
+
+    #[test]
+    fn new_sessions_never_ask_which_account() {
+        let (mut a, d) = app();
+        with_accounts(&mut a, &d);
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new-session".into()]);
+        key(&mut a, Role::Sidebar, KeyCode::Enter);
+        assert!(matches!(a.view().mode, Mode::Normal));
+        assert_eq!(a.st.sessions.len(), 1);
+        assert_eq!(a.st.sessions[0].profile, None);
+    }
+
+    #[test]
+    fn clicking_a_desktop_notification_opens_its_session() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        for n in ["a", "b", "c"] {
+            a.handle_ctl(&["new".into(), String::new(), n.into(), String::new()]);
+        }
+        let ids: Vec<String> = a.st.sessions.iter().map(|s| s.id.clone()).collect();
+        a.handle_hook(&ids[1], "PermissionRequest", &serde_json::Value::Null);
+        a.tick();
+        let desktop = a
+            .outbox
+            .iter()
+            .find(|o| o.channel == Channel::Desktop)
+            .expect("a desktop notification");
+        assert_eq!(desktop.sid, ids[1]);
+        a.handle_ctl(&["open".into(), desktop.sid.clone()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        a.handle_ctl(&["launched".into(), d.path().display().to_string()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+        assert!(a.open_on_launch.is_none());
+        a.handle_ctl(&["open".into(), "gone".into()]);
+        assert_eq!(a.view().active.unwrap().session, "b");
+    }
+
+    #[test]
     fn ctrl_g_cycles_through_what_needs_you_then_says_all_clear() {
         let (mut a, d) = app();
         a.handle_ctl(&["add".into(), d.path().display().to_string()]);
@@ -5787,13 +6078,36 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_project_stops_its_running_sessions() {
+        let (mut a, d) = app();
+        a.handle_ctl(&["add".into(), d.path().display().to_string()]);
+        a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
+        let pid = a.st.projects[0].id.clone();
+        a.cursor = Some(CurRef::Project(pid));
+        key(&mut a, Role::Sidebar, KeyCode::Char('x'));
+        assert!(matches!(
+            a.view().mode,
+            Mode::ConfirmKill {
+                running: Some(1),
+                ..
+            }
+        ));
+        key(&mut a, Role::Sidebar, KeyCode::Char('y'));
+        assert!(a.st.projects.is_empty());
+        assert!(a.st.sessions.is_empty());
+        assert!(a.view().active.is_none());
+    }
+
+    #[test]
     fn kill_confirms_and_moves_to_neighbor() {
         let (mut a, d) = app();
         a.handle_ctl(&["add".into(), d.path().display().to_string()]);
         a.handle_ctl(&["new".into(), String::new(), "a".into(), String::new()]);
         a.handle_ctl(&["new".into(), String::new(), "b".into(), String::new()]);
         key(&mut a, Role::Sidebar, KeyCode::Char('x'));
-        assert!(matches!(a.view().mode, Mode::ConfirmKill { ref name } if name == "b"));
+        assert!(
+            matches!(a.view().mode, Mode::ConfirmKill { ref name, running: None } if name == "b")
+        );
         key(&mut a, Role::Sidebar, KeyCode::Char('y'));
         assert_eq!(a.st.sessions.len(), 1);
         assert_eq!(a.view().active.unwrap().session, "a");

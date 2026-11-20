@@ -77,7 +77,7 @@ impl<B: SessionBackend + UiBackend> App<B> {
         Ok(())
     }
 
-    fn open_attention(&mut self, sid: &str) {
+    pub(super) fn open_attention(&mut self, sid: &str) {
         self.cancel_mode();
         self.activate(sid);
         self.sync_main();

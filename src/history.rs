@@ -6,14 +6,21 @@ use std::time::{Duration, SystemTime};
 const RECENT: Duration = Duration::from_secs(60 * 86400);
 const MAX: usize = 12;
 
+fn roots() -> &'static [PathBuf] {
+    static ROOTS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| crate::profile::project_roots(&crate::profile::load()))
+}
+
 pub fn scan() -> Vec<(PathBuf, usize)> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };
-    scan_dir(&home.join(".claude/projects"), &home)
-        .into_iter()
-        .map(|(p, n, _)| (p, n))
-        .collect()
+    let mut found: Vec<(PathBuf, usize, SystemTime)> =
+        roots().iter().flat_map(|r| scan_dir(r, &home)).collect();
+    found.sort_by_key(|b| std::cmp::Reverse(b.2));
+    found.dedup_by(|a, b| a.0 == b.0);
+    found.truncate(MAX);
+    found.into_iter().map(|(p, n, _)| (p, n)).collect()
 }
 
 pub fn scan_dir(root: &Path, home: &Path) -> Vec<(PathBuf, usize, SystemTime)> {
@@ -75,15 +82,11 @@ fn cwd_of(path: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn has_transcript(claude_id: &str) -> bool {
-    transcript(claude_id).is_some()
-}
-
-pub fn transcript(claude_id: &str) -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
+pub fn transcript_in(roots: &[PathBuf], claude_id: &str) -> Option<PathBuf> {
     let name = format!("{claude_id}.jsonl");
-    std::fs::read_dir(home.join(".claude/projects"))
-        .into_iter()
+    roots
+        .iter()
+        .flat_map(std::fs::read_dir)
         .flatten()
         .flatten()
         .map(|d| d.path().join(&name))

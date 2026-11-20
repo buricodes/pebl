@@ -72,8 +72,17 @@ fn run_loop(role: Role) -> Result<()> {
     let mut redraw = true;
     let started = std::time::Instant::now();
     let mut last_frame = u64::MAX;
+    let mut scroll: Option<usize> = None;
     loop {
-        while let Ok(v) = rx.try_recv() {
+        while let Ok(mut v) = rx.try_recv() {
+            if let Some(v) = v.as_mut().filter(|_| role == Role::Sidebar) {
+                v.side_scroll = scroll;
+                if scroll.is_some() {
+                    let size = term.size().unwrap_or_default();
+                    scroll = Some(sidebar::scrolled(v, size.width, size.height, 0));
+                    v.side_scroll = scroll;
+                }
+            }
             if let (Some(v), Role::Sidebar) = (&v, role) {
                 if bell.is_some_and(|b| v.bell > b) {
                     let _ = std::io::stdout().write_all(b"\x07");
@@ -160,6 +169,26 @@ fn run_loop(role: Role) -> Result<()> {
                         .and_then(|v| sidebar::list_row(v, w, h, m.row))
                         .map(|y| Input::Click { x: m.column, y })
                 }
+            }
+            Event::Mouse(m)
+                if role == Role::Sidebar
+                    && matches!(
+                        m.kind,
+                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                    ) =>
+            {
+                let by = if m.kind == MouseEventKind::ScrollUp {
+                    -3
+                } else {
+                    3
+                };
+                if let Some(v) = view.as_mut() {
+                    let size = term.size().unwrap_or_default();
+                    scroll = Some(sidebar::scrolled(v, size.width, size.height, by));
+                    v.side_scroll = scroll;
+                    redraw = true;
+                }
+                None
             }
             Event::Paste(text) => Some(Input::Paste(text)),
             Event::Resize(..) => {

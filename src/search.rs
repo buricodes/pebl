@@ -46,8 +46,8 @@ pub fn conv(id: &str, cwd: &Path, title: &str, texts: &[&str]) -> Conv {
     }
 }
 
-pub fn root() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude/projects"))
+pub fn roots(profiles: &crate::profile::Profiles) -> Vec<PathBuf> {
+    crate::profile::project_roots(profiles)
 }
 
 fn files(root: &Path) -> Vec<(PathBuf, u64, u64)> {
@@ -77,8 +77,8 @@ fn files(root: &Path) -> Vec<(PathBuf, u64, u64)> {
     out
 }
 
-pub fn refresh(shared: &Shared, root: &Path) {
-    let found = files(root);
+pub fn refresh(shared: &Shared, roots: &[PathBuf]) {
+    let found: Vec<(PathBuf, u64, u64)> = roots.iter().flat_map(|r| files(r)).collect();
     {
         let Ok(mut idx) = shared.lock() else { return };
         idx.convs
@@ -278,7 +278,7 @@ mod tests {
         )
         .unwrap();
         let shared: Shared = Default::default();
-        refresh(&shared, tmp.path());
+        refresh(&shared, &[tmp.path().to_path_buf()]);
         let idx = shared.lock().unwrap();
         let r = search(&idx, "REDIS", Some(Path::new("/code")), &|_| false);
         assert_eq!(r.hits.len(), 1);
@@ -293,7 +293,7 @@ mod tests {
         let mut s = std::fs::read_to_string(&f).unwrap();
         s.push_str(&user("now add kubernetes"));
         std::fs::write(&f, s).unwrap();
-        refresh(&shared, tmp.path());
+        refresh(&shared, &[tmp.path().to_path_buf()]);
         let idx = shared.lock().unwrap();
         assert_eq!(search(&idx, "kubernetes", None, &|_| true).hits.len(), 1);
     }
